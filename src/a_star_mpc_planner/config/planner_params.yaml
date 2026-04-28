@@ -127,8 +127,8 @@
     # merged into the Gaussian grid every planning cycle, so walls
     # that left sensor range remain visible to A*.
     # Set map_decay_sec: 0.0 to keep all obstacles forever (static env).
-    map_decay_sec:  15.0   # seconds before an unconfirmed cell expires
-    map_max_cells:  50000  # memory cap — oldest cells dropped when exceeded
+    map_decay_sec:  5.0   # seconds before an unconfirmed cell expires
+    map_max_cells:  5000  # memory cap — oldest cells dropped when exceeded
 
     # ─────────────────────────────────────────────────────────────
     # Navigation graph (topological global memory)

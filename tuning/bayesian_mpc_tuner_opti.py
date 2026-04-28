@@ -6,6 +6,8 @@ Per-trial artifacts saved to tuning_results/trial_NNN/:
   planner_params.yaml         — exact YAML used (parameter history)
   scenario_<name>/rosbag/     — ros2 bag record for every scenario
   gp_surrogate.json           — ARD-GP kernel params fit on accumulated data
+  gp_data/training_data.json  — full reloadable GP data (X, y, predictions, marginals)
+  gp_data/gp_model.joblib     — fitted GaussianProcessRegressor (reload with joblib.load)
   tpe_state.json              — hyperopt TPE Trials state snapshot
   metadata.json               — params, per-scenario scores, timing
 
@@ -16,6 +18,28 @@ Root-level artifacts:
   convergence.png             — score vs trial
   param_importance.png        — GP-derived parameter sensitivity
   length_scales.png           — GP length scale evolution
+  gp_marginals.png            — GP posterior mean ±1σ per parameter (1-D slices)
+  gp_fitted_vs_actual.png     — GP posterior mean at training points vs observed score
+
+Reload snippet (run outside tuner after experiment):
+    import joblib, json
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    gpr  = joblib.load("trial_NNN/gp_data/gp_model.joblib")
+    data = json.load(open("trial_NNN/gp_data/training_data.json"))
+
+    # Marginal for any parameter
+    m = data["marginals"]["mpc_Q_x"]
+    plt.plot(m["x_raw"], m["mean"], label="GP mean")
+    plt.fill_between(m["x_raw"], m["std_lo"], m["std_hi"], alpha=0.3, label="±1σ")
+    plt.axvline(m["best_x"], color="r", linestyle="--", label="best observed")
+    plt.show()
+
+    # Fitted vs actual
+    y_pred = np.array(data["y_pred_mean"])
+    y_true = np.array(data["y"])
+    plt.scatter(y_true, y_pred); plt.plot([0,1],[0,1],"r--"); plt.show()
 
 Hardening changes applied (see FIX-N labels throughout):
   FIX-1  ROS 2 lifecycle: rclpy.init() once at program start, nodes destroyed per scenario
@@ -52,7 +76,7 @@ import yaml
 import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Path as NavPath
 from sensor_msgs.msg import PointCloud2
@@ -87,7 +111,7 @@ log = logging.getLogger("mpc_tuner")
 REPO_ROOT    = Path(__file__).parent.parent.resolve()
 BASE_PARAMS  = REPO_ROOT / "src/a_star_mpc_planner/config/planner_params.yaml"
 RESULTS_DIR  = Path(os.environ.get("TUNING_RESULTS_DIR",
-                    "/media/lorenzo/writable/tuning_results"))
+                    "/media/lorenzo/writable/Go2_navigation/tuning_results"))
 ROS_SETUP    = "/opt/ros/humble/setup.bash"
 PKG_SETUP    = REPO_ROOT / "install/setup.bash"
 
@@ -104,30 +128,39 @@ SEARCH_SPACE = {
 
 PARAM_NAMES = list(SEARCH_SPACE.keys())
 
+# Search bounds extracted once at module level for use in marginal grids
+SEARCH_BOUNDS: dict[str, tuple[float, float]] = {
+    "mpc_Q_x":           (50.0,  500.0),
+    "mpc_Q_y":           (50.0,  500.0),
+    "mpc_Q_yaw":         (0.1,   15.0),
+    "mpc_Q_terminal":    (20.0,  300.0),
+    "mpc_W_obs_sigmoid": (50.0,  400.0),
+    "grid_std":          (0.1,   0.25),
+}
+
 # ─── Trial settings ───────────────────────────────────────────────────────────
 
 MAX_EVALS             = 30
 N_RANDOM_INIT         = 8
-SCENARIO_TIMEOUT      = 120     # default per-scenario timeout (s)
+SCENARIO_TIMEOUT      = 300     # default per-scenario timeout (s)
 PLANNER_DELAY_SEC     = 30      # Gazebo stabilisation delay (s)
 CLEANUP_WAIT_SEC      = 5
 NAV_LOG_INTERVAL      = 5.0     # s between navigation status lines
 
-# FIX-11: per-trial hard ceiling (s); prevents a stuck trial from blocking forever
+# FIX-11: per-trial hard ceiling (s)
 GLOBAL_TRIAL_TIMEOUT  = 1200    # 20 min absolute max per trial
 
 # FIX-4: early-termination thresholds
-EARLY_TERM_STALL_SEC        = 20.0   # abort if no pose update for this long
-EARLY_TERM_PROGRESS_SEC     = 30.0   # look-back window for progress check
-EARLY_TERM_PROGRESS_THRESH  = 0.02   # min fractional improvement per window
-EARLY_TERM_MPC_FAIL_RATE    = 0.7    # abort if MPC success rate < this over last 20 solves
+EARLY_TERM_STALL_SEC        = 100.0
+EARLY_TERM_PROGRESS_SEC     = 30.0
+EARLY_TERM_PROGRESS_THRESH  = 0.02
+EARLY_TERM_MPC_FAIL_RATE    = 0.7
 
 # FIX-7: disk/bag policy
-BAG_KEEP_LAST_N_TRIALS       = 5     # keep bags for the N most recent trials (0 = keep all)
-BAG_RECORD_ONLY_BEST         = False # if True, only record bags when score improves
-BAG_COMPRESS                 = True  # use --compression zstd
+BAG_KEEP_LAST_N_TRIALS = 5
+BAG_RECORD_ONLY_BEST   = False
+BAG_COMPRESS           = True
 
-# FIX-7: reduced topic set — drop heavy point-cloud from default recording
 BAG_TOPICS = [
     "/odom",
     "/go2/pose",
@@ -139,7 +172,6 @@ BAG_TOPICS = [
     "/goal_pose",
     "/tf",
     "/tf_static",
-    # "/lidar/points_filtered",  # large — re-enable if needed
 ]
 
 SCENARIOS = [
@@ -147,11 +179,12 @@ SCENARIOS = [
         "name": "open_square",
         "world": "default.sdf", "world_pkg": "go2_sim",
         "robot_x": 0.0, "robot_y": 0.0, "robot_heading": 0.0,
-        "goals": [[6.0, 0.0], [6.0, 6.0], [0.0, 6.0]],
+        # Goals in clear space past static boxes/cylinders; dynamic obstacles on the path
+        "goals": [[7.0, 0.0], [7.0, 6.0], [0.0, 7.0]],
         "obstacles": [
-            {"x": 2.5, "y":  0.0},
-            {"x": 6.0, "y":  2.5},
-            {"x": 3.5, "y":  6.0},
+            {"x": 3.5, "y":  0.0},
+            {"x": 7.0, "y":  3.0},
+            {"x": 3.5, "y":  6.5},
         ],
         "weight": 0.10,
     },
@@ -159,10 +192,11 @@ SCENARIOS = [
         "name": "open_zigzag",
         "world": "default.sdf", "world_pkg": "go2_sim",
         "robot_x": 0.0, "robot_y": 0.0, "robot_heading": 0.0,
-        "goals": [[-4.0, 5.0], [4.0, 5.0], [0.0, 10.0]],
+        # Goals in clear space; obstacles staggered left-right to force a zigzag path
+        "goals": [[-6.0, 3.0], [6.0, 6.0], [-6.0, 9.0]],
         "obstacles": [
-            {"x": -2.0, "y": 2.5},
-            {"x":  0.0, "y": 5.0},
+            {"x":  2.0, "y": 1.5},
+            {"x": -2.0, "y": 4.5},
             {"x":  2.0, "y": 7.5},
         ],
         "weight": 0.10,
@@ -171,12 +205,13 @@ SCENARIOS = [
         "name": "warehouse_loop",
         "world": "warehouse.world", "world_pkg": "sim_worlds",
         "robot_x": -10.0, "robot_y": -8.0, "robot_heading": 0.0,
-        "goals": [[10.0, -8.0], [10.0, 0.0], [-10.0, 0.0], [-10.0, 8.0]],
+        # Goals in aisle corridors (y=-8 south corridor / y=0 central / y=+8 north corridor)
+        "goals": [[12.0, -8.0], [12.0, 0.0], [-12.0, 0.0], [-12.0, 8.0]],
         "obstacles": [
             {"x":  0.0, "y": -8.0},
-            {"x": 10.0, "y": -4.0},
-            {"x":  2.0, "y":  0.0},
-            {"x": -6.0, "y":  0.0},
+            {"x": 12.0, "y": -4.0},
+            {"x":  0.0, "y":  0.0},
+            {"x": -6.0, "y":  4.0},
         ],
         "weight": 0.25,
         "timeout": 180,
@@ -185,11 +220,12 @@ SCENARIOS = [
         "name": "warehouse_cross_aisle",
         "world": "warehouse.world", "world_pkg": "sim_worlds",
         "robot_x": -4.0, "robot_y": 8.0, "robot_heading": -1.5708,
-        "goals": [[-4.0, 0.0], [4.0, 0.0], [4.0, -8.0]],
+        # Goals in the central inter-tier corridor and south corridor (clear of all shelves)
+        "goals": [[-4.0, 2.0], [4.0, 2.0], [4.0, -8.0]],
         "obstacles": [
-            {"x": -4.0, "y":  4.0},
-            {"x":  0.0, "y":  0.5},
-            {"x":  4.0, "y": -4.0},
+            {"x": -4.0, "y":  5.5},
+            {"x":  0.0, "y":  2.0},
+            {"x":  4.0, "y": -2.0},
         ],
         "weight": 0.20,
         "timeout": 150,
@@ -198,11 +234,12 @@ SCENARIOS = [
         "name": "office_traverse",
         "world": "indoor_office.world", "world_pkg": "sim_worlds",
         "robot_x": 2.0, "robot_y": -6.0, "robot_heading": 1.5708,
-        "goals": [[4.0, 0.0], [4.0, 3.5], [1.0, 6.0]],
+        # Goals in open floor areas past the cubicle dividers (y=-1.5/+1.5) and server wall (y≈4)
+        "goals": [[4.0, 0.0], [7.0, 3.0], [8.5, 6.0]],
         "obstacles": [
             {"x": 3.0, "y": -3.0},
-            {"x": 4.2, "y":  2.0},
-            {"x": 2.5, "y":  5.0},
+            {"x": 5.5, "y":  1.5},
+            {"x": 7.5, "y":  4.5},
         ],
         "weight": 0.20,
         "timeout": 150,
@@ -211,11 +248,12 @@ SCENARIOS = [
         "name": "office_corridor",
         "world": "indoor_office.world", "world_pkg": "sim_worlds",
         "robot_x": -4.0, "robot_y": -6.0, "robot_heading": 1.5708,
-        "goals": [[-4.0, 0.0], [4.0, 0.0], [4.0, 3.5]],
+        # Goals in open floor areas past the cubicle dividers and north of the meeting-room wall (y≈4.25)
+        "goals": [[-4.0, 0.0], [4.0, 0.0], [0.0, 6.5]],
         "obstacles": [
             {"x": -3.5, "y": -3.0},
-            {"x":  0.0, "y": -0.5},
-            {"x":  3.8, "y":  2.0},
+            {"x":  0.0, "y":  0.0},
+            {"x": -1.0, "y":  3.5},
         ],
         "weight": 0.15,
         "timeout": 150,
@@ -254,7 +292,6 @@ def _save_yaml(data: dict, path: Path) -> None:
 
 
 def _ts() -> str:  # FIX-12: type hints throughout
-    """ISO timestamp string for log messages."""
     return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
 
@@ -273,8 +310,6 @@ def build_trial_yaml(base: dict, params: dict, trial_num: int) -> dict:
 # ─── Rosbag recorder (FIX-2, FIX-7) ─────────────────────────────────────────
 
 class RosbagRecorder:
-    """Manages a `ros2 bag record` subprocess with clean SIGTERM shutdown."""
-
     def __init__(self, output_dir: Path, compress: bool = BAG_COMPRESS):
         self.output_dir = output_dir
         self._compress  = compress
@@ -282,7 +317,7 @@ class RosbagRecorder:
 
     def start(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        topics = " ".join(BAG_TOPICS)
+        topics        = " ".join(BAG_TOPICS)
         compress_flag = "--compression-mode file --compression-format zstd" if self._compress else ""
         cmd = _source_cmd(
             f"ros2 bag record {topics} {compress_flag} --output {self.output_dir}/bag"
@@ -296,7 +331,6 @@ class RosbagRecorder:
         log.debug("RosbagRecorder started  pid=%d  dir=%s", self._proc.pid, self.output_dir)
 
     def stop(self) -> None:
-        # FIX-2: graceful stop before killing simulation
         if self._proc is None:
             return
         pid = self._proc.pid
@@ -322,7 +356,6 @@ class RosbagRecorder:
 # ─── Process kill helper (FIX-2) ─────────────────────────────────────────────
 
 def _kill_proc(proc: subprocess.Popen, label: str, sigterm_timeout: float = 8.0) -> None:
-    """Send SIGTERM to process group, escalate to SIGKILL on timeout."""
     if proc is None:
         return
     pid = proc.pid
@@ -349,8 +382,6 @@ def _kill_proc(proc: subprocess.Popen, label: str, sigterm_timeout: float = 8.0)
 
 class SimulationManager:
     """
-    Manages the Gazebo + planner stack.
-
     FIX-3: One Gazebo instance per trial. Between scenarios we reset robot pose
     and respawn obstacles instead of doing a full restart.
     """
@@ -361,20 +392,16 @@ class SimulationManager:
         self._sim_log_fh = None
         self._current_world: Optional[str] = None
 
-    # ── Launch (once per trial) ───────────────────────────────────────────────
-
     def launch(self, params_yaml: Path, scenario: dict) -> None:
-        """Launch Gazebo + planner stack. Reuse if same world is already running."""
         world_rel = scenario["world"]
         world_pkg = scenario.get("world_pkg", "go2_sim")
 
-        # FIX-3: reuse running simulation when world hasn't changed
         if self._proc is not None and self._current_world == world_rel:
             log.info("  [sim] reusing Gazebo for world=%s  — resetting robot pose", world_rel)
             self._reset_robot(scenario)
+            self._reset_nav_state(scenario)
             return
 
-        # Need a fresh launch
         if self._proc is not None:
             self.kill()
 
@@ -387,7 +414,7 @@ class SimulationManager:
         robot_x       = scenario.get("robot_x", 0.0)
         robot_y       = scenario.get("robot_y", 0.0)
         robot_heading = scenario.get("robot_heading", 0.0)
-        goals = scenario.get("goals", [[scenario.get("goal_x", 0.0), scenario.get("goal_y", 0.0)]])
+        goals         = scenario.get("goals", [[scenario.get("goal_x", 0.0), scenario.get("goal_y", 0.0)]])
         first_gx, first_gy = goals[0]
 
         cmd = _source_cmd(
@@ -416,7 +443,6 @@ class SimulationManager:
         )
         self._current_world = world_rel
 
-        # FIX-10: condition-based check instead of fixed sleep
         deadline = time.time() + 10
         while time.time() < deadline:
             time.sleep(0.5)
@@ -425,33 +451,197 @@ class SimulationManager:
         log.info("  [sim] launched  pid=%d  world=%s", self._proc.pid, world_rel)
 
     def _reset_robot(self, scenario: dict) -> None:
-        """Reset robot to spawn pose via ROS 2 service call."""
+        """
+        Try strategies in order, each with its own short timeout.
+
+        Strategy 1 — gz service /world/<name>/set_pose   (Gazebo Harmonic, gz-sim 8+)
+        Strategy 2 — ign service /world/<name>/set_pose  (Ignition Gazebo, gz-sim 6/7)
+        Strategy 3 — ros2 /world/<name>/set_entity_state bridge (ros_gz)
+        Strategy 4 — Custom /reset_robot_pose service (may not exist).
+        Strategy 5 — Publish to /initialpose (Nav2 AMCL only — last resort).
+        """
+        import math
         rx = scenario.get("robot_x", 0.0)
         ry = scenario.get("robot_y", 0.0)
         rh = scenario.get("robot_heading", 0.0)
-        cmd = _source_cmd(
-            f"ros2 service call /reset_robot_pose std_srvs/srv/Empty "
-            f"|| ros2 topic pub --once /initialpose geometry_msgs/msg/PoseWithCovarianceStamped "
-            f"'{{pose: {{pose: {{position: {{x: {rx}, y: {ry}}}, orientation: {{z: {rh}}}}}}}}}'",
+        qz = math.sin(rh / 2.0)
+        qw = math.cos(rh / 2.0)
+
+        # World name without extension: "default.sdf" → "default"
+        world_name = Path(scenario.get("world", "default.sdf")).stem
+
+        # gz/ign transport Pose proto (text format)
+        _pose_proto = (
+            f"name: 'go2' "
+            f"position: {{x: {rx} y: {ry} z: 0.05}} "
+            f"orientation: {{x: 0.0 y: 0.0 z: {qz:.6f} w: {qw:.6f}}}"
         )
-        try:
-            subprocess.call(
-                ["bash", "-c", cmd],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                timeout=8,
-            )
-        except Exception as exc:
-            log.warning("  [sim] robot reset failed (non-fatal): %s", exc)
+        _gz_svc = f"/world/{world_name}/set_pose"
+
+        # ros_gz bridge SetEntityState payload (ROS 2 service)
+        _bridge_payload = (
+            "{state: {name: go2, pose: {position:"
+            f" {{x: {rx}, y: {ry}, z: 0.05}},"
+            f" orientation: {{x: 0.0, y: 0.0, z: {qz:.6f}, w: {qw:.6f}}}"
+            "}}}"
+        )
+
+        _ip_payload = (
+            "{header: {frame_id: map},"
+            f" pose: {{pose: {{position: {{x: {rx}, y: {ry}, z: 0.0}},"
+            f" orientation: {{x: 0.0, y: 0.0, z: {qz:.6f}, w: {qw:.6f}}}"
+            "}, covariance: [0.25,0,0,0,0,0, 0,0.25,0,0,0,0, 0,0,0,0,0,0,"
+            " 0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0.07]}}"
+        )
+
+        strategies: list[tuple[str, str]] = [
+            (
+                # Gazebo Harmonic (gz-sim 8+): direct physics teleport via gz transport
+                f"gz service {_gz_svc}",
+                (
+                    f"gz service -s {_gz_svc}"
+                    f" --reqtype gz.msgs.Pose"
+                    f" --reptype gz.msgs.Boolean"
+                    f" --timeout 2000"
+                    f" --req \"{_pose_proto}\" 2>/dev/null"
+                ),
+            ),
+            (
+                # Ignition Gazebo (gz-sim 6/7, ROS 2 Humble default)
+                f"ign service {_gz_svc}",
+                (
+                    f"ign service -s {_gz_svc}"
+                    f" --reqtype ignition.msgs.Pose"
+                    f" --reptype ignition.msgs.Boolean"
+                    f" --timeout 2000"
+                    f" --req \"{_pose_proto}\" 2>/dev/null"
+                ),
+            ),
+            (
+                # ros_gz bridge: /world/<name>/set_entity_state (ROS 2 service)
+                f"/world/{world_name}/set_entity_state",
+                _source_cmd(
+                    f"ros2 service call /world/{world_name}/set_entity_state"
+                    f" gazebo_msgs/srv/SetEntityState '{_bridge_payload}'  2>/dev/null"
+                ),
+            ),
+            (
+                "/reset_robot_pose service",
+                _source_cmd("ros2 service call /reset_robot_pose std_srvs/srv/Empty 2>/dev/null"),
+            ),
+            (
+                "/initialpose topic",
+                _source_cmd(
+                    f"ros2 topic pub --once /initialpose"
+                    f" geometry_msgs/msg/PoseWithCovarianceStamped '{_ip_payload}'  2>/dev/null"
+                ),
+            ),
+        ]
+
+        for label, cmd in strategies:
+            try:
+                ret = subprocess.call(
+                    ["bash", "-c", cmd],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=15,
+                )
+                if ret == 0:
+                    log.info("  [sim] robot reset via '%s'  pos=(%.2f, %.2f)  heading=%.3f",
+                             label, rx, ry, rh)
+                    time.sleep(1.5)
+                    return
+                else:
+                    log.debug("  [sim] reset strategy '%s' returned %d — trying next", label, ret)
+            except subprocess.TimeoutExpired:
+                log.debug("  [sim] reset strategy '%s' timed out (15s) — trying next", label)
+            except Exception as exc:
+                log.debug("  [sim] reset strategy '%s' error: %s — trying next", label, exc)
+
+        log.warning(
+            "  [sim] all robot-reset strategies failed for scenario '%s'"
+            "  pos=(%.2f, %.2f) — continuing without reset",
+            scenario.get("name", "?"), rx, ry,
+        )
+
+    def _reset_nav_state(self, scenario: dict) -> None:
+        """
+        Redirect the planner to the new scenario's first goal immediately after
+        the robot is teleported, so it stops pursuing the previous scenario's goal.
+
+        Also clears path visualisations in RViz and Nav2 costmaps (best-effort).
+        """
+        goals   = scenario.get("goals", [[scenario.get("goal_x", 0.0), scenario.get("goal_y", 0.0)]])
+        gx, gy  = goals[0]
+        _empty_path = "{header: {frame_id: 'map'}, poses: []}"
+        _goal_pose  = (
+            "{header: {frame_id: 'map'},"
+            f" pose: {{position: {{x: {gx}, y: {gy}, z: 0.0}},"
+            " orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}}"
+        )
+        cmds: list[tuple[str, str]] = [
+            # Redirect the planner to the new scenario goal — stops it chasing the old one
+            ("redirect goal",
+             _source_cmd(
+                 f"ros2 topic pub --once"
+                 f" --qos-reliability reliable --qos-durability transient_local"
+                 f" /goal_pose geometry_msgs/msg/PoseStamped '{_goal_pose}' 2>/dev/null"
+             )),
+            # Clear stale path visualisations in RViz
+            ("clear /a_star/path",
+             _source_cmd(
+                 f"ros2 topic pub --once /a_star/path"
+                 f" nav_msgs/msg/Path '{_empty_path}' 2>/dev/null"
+             )),
+            ("clear /mpc/predicted_path",
+             _source_cmd(
+                 f"ros2 topic pub --once /mpc/predicted_path"
+                 f" nav_msgs/msg/Path '{_empty_path}' 2>/dev/null"
+             )),
+            # Clear Nav2 costmaps (best-effort — no-op if not running Nav2)
+            ("clear global costmap",
+             _source_cmd(
+                 "ros2 service call /global_costmap/clear_entirely_global_costmap"
+                 " nav2_msgs/srv/ClearEntireCostmap '{}' 2>/dev/null"
+             )),
+            ("clear local costmap",
+             _source_cmd(
+                 "ros2 service call /local_costmap/clear_entirely_local_costmap"
+                 " nav2_msgs/srv/ClearEntireCostmap '{}' 2>/dev/null"
+             )),
+        ]
+        procs = []
+        for label, cmd in cmds:
+            try:
+                p = subprocess.Popen(
+                    ["bash", "-c", cmd],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                procs.append((label, p))
+            except Exception as exc:
+                log.debug("  [sim] nav-reset '%s' launch error: %s", label, exc)
+
+        deadline = time.time() + 5.0
+        for label, p in procs:
+            remaining = max(0.1, deadline - time.time())
+            try:
+                p.wait(timeout=remaining)
+                if p.returncode == 0:
+                    log.debug("  [sim] nav-reset '%s' ok", label)
+                else:
+                    log.debug("  [sim] nav-reset '%s' returned %d", label, p.returncode)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                log.debug("  [sim] nav-reset '%s' timed out — killed", label)
+        log.info("  [sim] nav state flushed — planner redirected to (%.2f, %.2f)", gx, gy)
 
     def spawn_obstacles(self, scenario: dict) -> None:
-        """Delete old tuner obstacles, then spawn new ones for this scenario."""
-        # Delete previous set (FIX-3: respawn instead of full restart)
         self._delete_obstacles()
-        obstacles = scenario.get("obstacles", [])
-        for i, obs in enumerate(obstacles):
+        for i, obs in enumerate(scenario.get("obstacles", [])):
             model = obs.get("model", "obstacle_cylinder")
             name  = f"tuner_obs_{i}"
-            cmd = _source_cmd(
+            cmd   = _source_cmd(
                 f"ros2 run sim_scenarios spawn_obstacle"
                 f" --name {name} --model {model}"
                 f" --x {obs['x']} --y {obs['y']} --z 0.5"
@@ -466,10 +656,9 @@ class SimulationManager:
                 log.warning("  [sim] obstacle spawn timed out  name=%s", name)
 
     def _delete_obstacles(self) -> None:
-        """Delete all tuner_obs_* models from the simulation."""
-        for i in range(20):  # generous upper bound
+        for i in range(20):
             name = f"tuner_obs_{i}"
-            cmd = _source_cmd(
+            cmd  = _source_cmd(
                 f"ros2 service call /delete_entity gazebo_msgs/srv/DeleteEntity "
                 f"'{{name: {name}}}' 2>/dev/null"
             )
@@ -483,8 +672,6 @@ class SimulationManager:
                 break
 
     def kill(self) -> None:
-        """Terminate simulation completely. Called between trials, not scenarios."""
-        # FIX-2: proper SIGTERM→SIGKILL sequence, no pkill -9
         if self._proc is not None:
             _kill_proc(self._proc, "sim_launch")
             self._proc = None
@@ -496,25 +683,18 @@ class SimulationManager:
             self._sim_log_fh = None
         self._current_world = None
 
-        # Belt-and-suspenders: targeted SIGTERM for known process names
         _KNOWN_PROCS = [
             "ign gazebo", "gzserver", "gzclient",
             "a_star_node", "mpc_node", "setpoint_to_cmd_vel",
             "odom_to_pose", "cloud_self_filter",
         ]
         for pattern in _KNOWN_PROCS:
-            # Send SIGTERM first, not SIGKILL
-            subprocess.call(
-                ["pkill", "-TERM", "-f", pattern],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
+            subprocess.call(["pkill", "-TERM", "-f", pattern],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(3)
-        # Escalate only for survivors
         for pattern in _KNOWN_PROCS:
-            subprocess.call(
-                ["pkill", "-KILL", "-f", pattern],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
+            subprocess.call(["pkill", "-KILL", "-f", pattern],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(CLEANUP_WAIT_SEC)
         log.debug("  [sim] killed")
 
@@ -522,14 +702,6 @@ class SimulationManager:
 # ─── ROS 2 performance monitor (FIX-1, FIX-5) ────────────────────────────────
 
 class PerformanceMonitor(Node):
-    """
-    Records trajectory, commands, LiDAR closest-obstacle distance, and MPC
-    diagnostics during a single scenario.
-
-    FIX-1: Node is created and destroyed per scenario; rclpy itself stays alive.
-    FIX-5: PointCloud2 parsed with sensor_msgs_py; falls back to struct on ImportError.
-    """
-
     _DIAG_SUCCESS  = 0
     _DIAG_COST     = 1
     _DIAG_SOLVE_MS = 2
@@ -540,38 +712,51 @@ class PerformanceMonitor(Node):
 
     def __init__(self):
         super().__init__("performance_monitor")
-        self.trajectory: list     = []
-        self.cmd_history: list    = []
-        self.mpc_diag: list       = []
+        self.trajectory: list      = []
+        self.cmd_history: list     = []
+        self.mpc_diag: list        = []
         self.predicted_paths: list = []
         self.obs_dist_history: list = []
-        self.n_cloud_msgs: int    = 0
-        self.min_obs_dist: float  = float("inf")
-        self.recording    = False
+        self.n_cloud_msgs: int     = 0
+        self.min_obs_dist: float   = float("inf")
+        self.recording             = False
         self.start_time: Optional[float] = None
-        self.goal_pos: Optional[tuple] = None
+        self.goal_pos: Optional[tuple]   = None
+        self._last_goal: Optional[tuple] = None
 
         _sensor_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
+        # TRANSIENT_LOCAL so the planner receives the goal even if it subscribes late
+        _goal_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
         self.create_subscription(PoseStamped,       "/go2/pose",              self._on_pose,  10)
         self.create_subscription(Twist,             "/cmd_vel",               self._on_cmd,   10)
         self.create_subscription(PointCloud2,       "/lidar/points_filtered", self._on_cloud, _sensor_qos)
         self.create_subscription(Float64MultiArray, "/mpc/diagnostics",       self._on_diag,  10)
         self.create_subscription(NavPath,           "/mpc/predicted_path",    self._on_path,   5)
-        self._goal_pub = self.create_publisher(PoseStamped, "/goal_pose", 10)
+        self._goal_pub = self.create_publisher(PoseStamped, "/goal_pose", _goal_qos)
 
     def publish_goal(self, goal_x: float, goal_y: float) -> None:
         msg = PoseStamped()
-        msg.header.frame_id = "map"
-        msg.header.stamp    = self.get_clock().now().to_msg()
-        msg.pose.position.x = float(goal_x)
-        msg.pose.position.y = float(goal_y)
+        msg.header.frame_id    = "map"
+        msg.header.stamp       = self.get_clock().now().to_msg()
+        msg.pose.position.x    = float(goal_x)
+        msg.pose.position.y    = float(goal_y)
         msg.pose.orientation.w = 1.0
         self._goal_pub.publish(msg)
-        self.goal_pos = (goal_x, goal_y)
+        self.goal_pos   = (goal_x, goal_y)
+        self._last_goal = (goal_x, goal_y)
+
+    def republish_last_goal(self) -> None:
+        if self._last_goal is not None:
+            self.publish_goal(*self._last_goal)
 
     def start(self, goal_x: float, goal_y: float) -> None:
         self.trajectory.clear()
@@ -638,7 +823,6 @@ class PerformanceMonitor(Node):
         ))
 
     def _on_cloud(self, msg: PointCloud2) -> None:
-        """FIX-5: parse PointCloud2 safely via sensor_msgs_py."""
         if not self.recording or msg.width == 0:
             return
         try:
@@ -653,20 +837,12 @@ class PerformanceMonitor(Node):
 
 
 def _parse_pointcloud_dists(msg: PointCloud2, max_points: int = 200) -> list:  # FIX-5
-    """
-    FIX-5: Extract XY distances from PointCloud2.
-    Prefers sensor_msgs_py.point_cloud2.read_points; falls back to struct.unpack.
-    """
     try:
         from sensor_msgs_py import point_cloud2 as pc2_utils
-        points = list(pc2_utils.read_points(
-            msg, field_names=("x", "y"), skip_nans=True,
-        ))
-        points = points[:max_points]
-        return [float(np.hypot(p[0], p[1])) for p in points]
+        points = list(pc2_utils.read_points(msg, field_names=("x", "y"), skip_nans=True))
+        return [float(np.hypot(p[0], p[1])) for p in points[:max_points]]
     except ImportError:
         pass
-    # Fallback: assume XYZ float layout (original approach)
     import struct
     point_step = msg.point_step
     n = min(msg.width * msg.height, max_points)
@@ -678,48 +854,57 @@ def _parse_pointcloud_dists(msg: PointCloud2, max_points: int = 200) -> list:  #
     return dists
 
 
-# ─── Early termination check (FIX-4) ─────────────────────────────────────────
+# ─── Early termination (FIX-4) ───────────────────────────────────────────────
 
 def _check_early_termination(
     monitor: "PerformanceMonitor",
     current_goal: tuple,
     initial_dist: float,
     now: float,
+    nav_start_t: float,
 ) -> Optional[str]:
-    """
-    Returns a reason string if the scenario should be aborted early, else None.
-    """
-    # 1. No pose updates for too long → navigation stack stalled
+    # elapsed: seconds since this goal started
+    elapsed = now - nav_start_t
+
+    # Never fire in the first EARLY_TERM_PROGRESS_SEC — planner may still be replanning.
+    if elapsed < EARLY_TERM_PROGRESS_SEC:
+        return None
+
+    # traj_now / goal_traj_start: trajectory-clock equivalents (p[0] units = time since
+    # monitor.start_time, not since nav_start_t).  Using these ensures stall and progress
+    # checks are on the same timescale as the stored trajectory points.
+    traj_now       = now - (monitor.start_time or now)
+    goal_traj_start = nav_start_t - (monitor.start_time or nav_start_t)
+
     if monitor.trajectory:
         last_pose_t = monitor.trajectory[-1][0]
-        if (now - (monitor.start_time or now) - last_pose_t) > EARLY_TERM_STALL_SEC:
+        if (traj_now - last_pose_t) > EARLY_TERM_STALL_SEC:
             return f"pose stall >{EARLY_TERM_STALL_SEC:.0f}s"
-    elif (now - (monitor.start_time or now)) > EARLY_TERM_STALL_SEC:
+    elif traj_now > EARLY_TERM_STALL_SEC:
         return f"no pose data after {EARLY_TERM_STALL_SEC:.0f}s"
 
-    # 2. Progress check over sliding window
     if monitor.trajectory:
+        # Only consider points from the current goal onward and within the progress window
         window = [
             p for p in monitor.trajectory
-            if (now - (monitor.start_time or now) - p[0]) <= EARLY_TERM_PROGRESS_SEC
+            if p[0] >= goal_traj_start and (traj_now - p[0]) <= EARLY_TERM_PROGRESS_SEC
         ]
         if len(window) >= 5:
-            oldest = window[0]
-            newest = window[-1]
             gx, gy = current_goal
-            d_old = float(np.hypot(oldest[1] - gx, oldest[2] - gy))
-            d_new = float(np.hypot(newest[1] - gx, newest[2] - gy))
+            d_old  = float(np.hypot(window[0][1] - gx, window[0][2] - gy))
+            d_new  = float(np.hypot(window[-1][1] - gx, window[-1][2] - gy))
             improvement = (d_old - d_new) / max(initial_dist, 0.01)
-            if improvement < EARLY_TERM_PROGRESS_THRESH:
+            # Only terminate for genuine stalling (0 ≤ Δ < threshold).
+            # Negative Δ means the robot is moving — possibly navigating around
+            # an obstacle — so let the timeout and MPC checks handle that case.
+            if 0.0 <= improvement < EARLY_TERM_PROGRESS_THRESH:
                 return (
                     f"insufficient progress over {EARLY_TERM_PROGRESS_SEC:.0f}s "
                     f"(Δ={improvement:.3f} < {EARLY_TERM_PROGRESS_THRESH})"
                 )
 
-    # 3. MPC failure rate too high in recent window
     if len(monitor.mpc_diag) >= 20:
-        recent = monitor.mpc_diag[-20:]
-        success_rate = sum(1 for d in recent if d[1] > 0.5) / 20.0
+        success_rate = sum(1 for d in monitor.mpc_diag[-20:] if d[1] > 0.5) / 20.0
         if success_rate < EARLY_TERM_MPC_FAIL_RATE:
             return f"MPC success rate {success_rate:.0%} < {EARLY_TERM_MPC_FAIL_RATE:.0%}"
 
@@ -729,7 +914,6 @@ def _check_early_termination(
 # ─── Score computation (FIX-6) ────────────────────────────────────────────────
 
 def _safe(val: float, default: float = 0.0) -> float:
-    """Replace NaN/Inf with a safe default."""
     return default if not np.isfinite(val) else float(val)
 
 
@@ -742,9 +926,6 @@ def compute_score(
     goal: tuple,
     goals_reached_frac: float = 1.0,
 ) -> tuple:
-    """
-    Compute composite score in [0, 1].  FIX-6: NaN guards, clamping, MPC penalty.
-    """
     if not monitor.trajectory:
         return 0.0, {"error": "no trajectory"}
 
@@ -756,26 +937,21 @@ def compute_score(
     dist_to_goal  = _safe(float(np.linalg.norm(final - goal_arr)))
     initial_dist  = _safe(float(np.linalg.norm(start - goal_arr)), default=1.0)
     goal_reached  = dist_to_goal < 0.5
-    progress_frac = _clamp(_safe(
-        max(0.0, (initial_dist - dist_to_goal) / max(initial_dist, 0.01))
-    ))
+    progress_frac = _clamp(_safe(max(0.0, (initial_dist - dist_to_goal) / max(initial_dist, 0.01))))
 
-    # Path efficiency
     if len(traj) > 1:
         path_len   = _safe(float(np.sum(np.linalg.norm(np.diff(traj, axis=0), axis=1))))
         efficiency = _clamp(_safe(initial_dist / max(path_len, initial_dist)))
     else:
         path_len, efficiency = 0.0, 0.0
 
-    # Control smoothness
     if len(monitor.cmd_history) > 3:
-        cmds      = np.array([(vx, vy, wz) for _, vx, vy, wz in monitor.cmd_history])
-        mean_jerk = _safe(float(np.mean(np.abs(np.diff(cmds, n=2, axis=0)))), default=999.0)
+        cmds       = np.array([(vx, vy, wz) for _, vx, vy, wz in monitor.cmd_history])
+        mean_jerk  = _safe(float(np.mean(np.abs(np.diff(cmds, n=2, axis=0)))), default=999.0)
         smoothness = _clamp(_safe(float(np.exp(-mean_jerk / 2.0))))
     else:
         mean_jerk, smoothness = 0.0, 0.0
 
-    # Obstacle avoidance
     _DANGER_THRESH  = 0.3
     _WARNING_THRESH = 0.6
     obstacle_detected = monitor.n_cloud_msgs >= 5
@@ -795,22 +971,18 @@ def compute_score(
             + min(mean_clearance / 2.0, 1.0) * 0.20
         )
 
-    # Time efficiency
     if goal_reached and monitor.trajectory:
         elapsed    = monitor.trajectory[-1][0]
-        expected   = initial_dist / 0.5
-        time_score = _clamp(_safe(expected / max(elapsed, 0.1)))
+        time_score = _clamp(_safe((initial_dist / 0.5) / max(elapsed, 0.1)))
     else:
         time_score = 0.0
 
-    # FIX-6: explicit MPC success rate penalty
     mpc_success_rate = 1.0
     if monitor.mpc_diag:
-        diag = np.array(monitor.mpc_diag)
+        diag             = np.array(monitor.mpc_diag)
         mpc_success_rate = _safe(float(diag[:, 1].mean()), default=0.0)
-    mpc_penalty = _clamp(mpc_success_rate)  # 0 = all failures, 1 = perfect
+    mpc_penalty = _clamp(mpc_success_rate)
 
-    # FIX-6: increase obstacle weight when goal not reached
     if goal_reached:
         score = _clamp(
             0.25 * 1.0
@@ -822,13 +994,12 @@ def compute_score(
             + 0.05 * mpc_penalty
         )
     else:
-        # Higher obstacle weight when goals not reached
         score = _clamp(
             0.18 * _safe(goals_reached_frac)
             + 0.14 * progress_frac
             + 0.07 * efficiency
             + 0.07 * smoothness
-            + 0.12 * obs_avoidance_score  # bumped from 0.09
+            + 0.12 * obs_avoidance_score
             + 0.07 * mpc_penalty
         )
 
@@ -857,7 +1028,6 @@ def compute_score(
         "score":               float(score),
     }
 
-    # MPC diagnostics summary
     if monitor.mpc_diag:
         diag = np.array(monitor.mpc_diag)
         metrics.update({
@@ -875,9 +1045,7 @@ def compute_score(
 
     if monitor.predicted_paths:
         metrics["mpc_n_predicted_paths"] = len(monitor.predicted_paths)
-        metrics["mpc_mean_horizon_pts"]  = float(
-            np.mean([p[1] for p in monitor.predicted_paths])
-        )
+        metrics["mpc_mean_horizon_pts"]  = float(np.mean([p[1] for p in monitor.predicted_paths]))
     else:
         metrics["mpc_n_predicted_paths"] = 0
 
@@ -886,15 +1054,26 @@ def compute_score(
 
 # ─── GP surrogate analysis (FIX-8) ───────────────────────────────────────────
 
-# FIX-8: moving average window for parameter importance smoothing
 _GP_IMPORTANCE_HISTORY: deque = deque(maxlen=5)
+
 
 def fit_gp_surrogate(history: list) -> dict:
     """
-    FIX-8: Fit ARD Matern-5/2 GP for analysis.
-    Requires at least 10 samples (not 3). Catches numerical errors defensively.
+    Fit ARD Matern-5/2 GP and return both summary scalars and full reloadable data.
+
+    The returned dict contains:
+      • All the usual summary keys (length_scales, param_sensitivity, noise_level, …)
+      • "_reloadable" sub-dict with:
+            X_raw          (N, D) — original parameter matrix
+            y              (N,)   — observed scores
+            X_scaled       (N, D) — standardised inputs
+            y_pred_mean    (N,)   — GP posterior mean at every training point
+            y_pred_std     (N,)   — GP posterior std  at every training point
+            marginals      per-parameter 1-D slices (50 points, others fixed at best)
+            search_bounds, param_names, scaler_mean, scaler_scale
+      • "_gpr_object" — the live fitted GPR (not JSON-safe; used by save_gp_checkpoint)
     """
-    MIN_SAMPLES = 10  # FIX-8: raised from 3
+    MIN_SAMPLES = 10
     if len(history) < MIN_SAMPLES:
         return {"skipped": f"need at least {MIN_SAMPLES} observations", "n": len(history)}
 
@@ -909,7 +1088,6 @@ def fit_gp_surrogate(history: list) -> dict:
         X = np.array([[t["params"][p] for p in PARAM_NAMES] for t in history])
         y = np.array([t["score"] for t in history])
 
-        # FIX-8: guard against degenerate y (all same value)
         if np.std(y) < 1e-8:
             return {"skipped": "y variance too low for GP fitting", "n": len(history)}
 
@@ -927,10 +1105,7 @@ def fit_gp_surrogate(history: list) -> dict:
             + WhiteKernel(noise_level=0.01, noise_level_bounds=(1e-5, 1.0))
         )
         gpr = GaussianProcessRegressor(
-            kernel=kernel,
-            n_restarts_optimizer=5,
-            normalize_y=True,
-            alpha=1e-6,
+            kernel=kernel, n_restarts_optimizer=5, normalize_y=True, alpha=1e-6,
         )
         gpr.fit(X_s, y)
 
@@ -940,39 +1115,130 @@ def fit_gp_surrogate(history: list) -> dict:
         length_scales = matern.length_scale.tolist()
         noise_level   = float(fitted.k2.noise_level)
 
-        inv_ls     = [1.0 / max(ls, 1e-9) for ls in length_scales]
-        total_inv  = sum(inv_ls) or 1.0
+        inv_ls          = [1.0 / max(ls, 1e-9) for ls in length_scales]
+        total_inv       = sum(inv_ls) or 1.0
         raw_sensitivity = {n: float(v / total_inv) for n, v in zip(PARAM_NAMES, inv_ls)}
 
-        # FIX-8: smooth importance with moving average
         _GP_IMPORTANCE_HISTORY.append(raw_sensitivity)
         smoothed_sensitivity = {
             name: float(np.mean([h.get(name, 0.0) for h in _GP_IMPORTANCE_HISTORY]))
             for name in PARAM_NAMES
         }
 
-        best_idx = int(np.argmax(y))
-        best_x   = X_s[best_idx:best_idx + 1]
-        gp_mean, gp_std = gpr.predict(best_x, return_std=True)
+        best_idx      = int(np.argmax(y))
+        best_x_s      = X_s[best_idx:best_idx + 1]
+        gp_mean_best, gp_std_best = gpr.predict(best_x_s, return_std=True)
 
-        return {
-            "n_observations":    len(history),
-            "kernel_theta_log":  fitted.theta.tolist(),
-            "constant_value":    constant_val,
-            "length_scales":     {n: float(ls) for n, ls in zip(PARAM_NAMES, length_scales)},
-            "noise_level":       noise_level,
-            "param_sensitivity": smoothed_sensitivity,
+        # ── GP predictions at every observed point ────────────────────────────
+        y_pred_mean, y_pred_std = gpr.predict(X_s, return_std=True)
+
+        # ── 1-D marginal slices ───────────────────────────────────────────────
+        # For each param: sweep 50 values across its search bounds,
+        # all other params held at the best-observed value.
+        N_GRID      = 50
+        best_x_raw  = X[best_idx]
+        marginals: dict = {}
+
+        for dim_i, pname in enumerate(PARAM_NAMES):
+            lo, hi   = SEARCH_BOUNDS.get(pname, (float(X[:, dim_i].min()), float(X[:, dim_i].max())))
+            grid_raw = np.linspace(lo, hi, N_GRID)
+
+            X_query_raw           = np.tile(best_x_raw, (N_GRID, 1))
+            X_query_raw[:, dim_i] = grid_raw
+            X_query_s             = scaler.transform(X_query_raw)
+
+            m, s = gpr.predict(X_query_s, return_std=True)
+            marginals[pname] = {
+                "x_raw":  grid_raw.tolist(),
+                "mean":   m.tolist(),
+                "std_lo": (m - s).tolist(),   # mean − 1σ
+                "std_hi": (m + s).tolist(),   # mean + 1σ
+                "best_x": float(best_x_raw[dim_i]),
+                "best_y": float(y[best_idx]),
+                "bounds": [lo, hi],
+                # Scatter: actual observed (x_i, score_i) for this parameter
+                "obs_x":  X[:, dim_i].tolist(),
+                "obs_y":  y.tolist(),
+            }
+
+        # ── Assemble result ───────────────────────────────────────────────────
+        result = {
+            # Summary scalars — go into gp_history.json
+            "n_observations":        len(history),
+            "kernel_theta_log":      fitted.theta.tolist(),
+            "constant_value":        constant_val,
+            "length_scales":         {n: float(ls) for n, ls in zip(PARAM_NAMES, length_scales)},
+            "noise_level":           noise_level,
+            "param_sensitivity":     smoothed_sensitivity,
             "param_sensitivity_raw": raw_sensitivity,
-            "gp_mean_at_best":   float(gp_mean[0]),
-            "gp_std_at_best":    float(gp_std[0]),
-            "scaler_mean":       scaler.mean_.tolist(),
-            "scaler_scale":      scaler.scale_.tolist(),
+            "gp_mean_at_best":       float(gp_mean_best[0]),
+            "gp_std_at_best":        float(gp_std_best[0]),
+            "scaler_mean":           scaler.mean_.tolist(),
+            "scaler_scale":          scaler.scale_.tolist(),
+            # Full reloadable data — saved separately by save_gp_checkpoint()
+            "_reloadable": {
+                "param_names":   PARAM_NAMES,
+                "search_bounds": {n: list(b) for n, b in SEARCH_BOUNDS.items()},
+                "X_raw":         X.tolist(),
+                "y":             y.tolist(),
+                "X_scaled":      X_s.tolist(),
+                "y_pred_mean":   y_pred_mean.tolist(),
+                "y_pred_std":    y_pred_std.tolist(),
+                "marginals":     marginals,
+                "scaler_mean":   scaler.mean_.tolist(),
+                "scaler_scale":  scaler.scale_.tolist(),
+                "best_idx":      int(best_idx),
+            },
+            # Live GPR object — used by save_gp_checkpoint(); not JSON-serialisable
+            "_gpr_object": gpr,
         }
+        return result
 
     except Exception as exc:
-        # FIX-8: log warning, don't crash
         log.warning("[GP] fit error (non-fatal): %s", exc)
         return {"error": str(exc), "n": len(history)}
+
+
+def save_gp_checkpoint(gp_state: dict, out_dir: Path) -> None:
+    """
+    Persist the full reloadable GP data to <out_dir>/gp_data/.
+
+    Files written:
+      training_data.json  — X_raw, y, predictions, marginals (reload without sklearn)
+      gp_model.joblib     — fitted GaussianProcessRegressor  (reload with joblib)
+      gp_summary.json     — scalar kernel params / sensitivity
+
+    All three are self-contained — you can regenerate any plot offline from them.
+    """
+    reloadable = gp_state.get("_reloadable")
+    gpr_object = gp_state.get("_gpr_object")
+    if reloadable is None:
+        return  # GP was skipped or errored — nothing to save
+
+    gp_dir = out_dir / "gp_data"
+    gp_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Full training + prediction data (JSON)
+    _save_json(reloadable, gp_dir / "training_data.json")
+
+    # 2. Fitted GPR (joblib pickle)
+    if gpr_object is not None:
+        try:
+            import joblib
+            joblib.dump(gpr_object, gp_dir / "gp_model.joblib")
+            log.debug("[GP] model checkpoint saved  %s", gp_dir / "gp_model.joblib")
+        except Exception as exc:
+            log.warning("[GP] joblib save failed (non-fatal): %s", exc)
+
+    # 3. Scalar summary (JSON) — same keys as gp_surrogate.json but without private keys
+    summary = {k: v for k, v in gp_state.items() if not k.startswith("_")}
+    _save_json(summary, gp_dir / "gp_summary.json")
+    log.debug("[GP] checkpoint written  %s", gp_dir)
+
+
+def _gp_state_for_json(gp_state: dict) -> dict:
+    """Strip non-JSON-serialisable private keys before saving to gp_history / gp_surrogate."""
+    return {k: v for k, v in gp_state.items() if not k.startswith("_")}
 
 
 def serialize_tpe_state(trials: Trials, trial_num: int) -> dict:
@@ -981,7 +1247,6 @@ def serialize_tpe_state(trials: Trials, trial_num: int) -> dict:
         best_t = trials.best_trial if trials.trials else {}
     except Exception:
         best_t = {}
-
     return {
         "trial":     trial_num,
         "n_trials":  len(trials.trials),
@@ -1018,7 +1283,8 @@ def _plot_convergence(results: list, out: Path) -> None:
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.scatter(range(1, len(scores) + 1), scores, alpha=0.6, s=30, label="Trial score")
     ax.plot(range(1, len(scores) + 1), best_so_far, "r-", lw=2, label="Best so far")
-    ax.set_xlabel("Trial"); ax.set_ylabel("Score"); ax.set_title("MPC Tuning — Convergence")
+    ax.set_xlabel("Trial"); ax.set_ylabel("Score")
+    ax.set_title("MPC Tuning — Convergence")
     ax.legend(); ax.grid(alpha=0.3)
     plt.tight_layout(); fig.savefig(out, dpi=150); plt.close(fig)
 
@@ -1061,10 +1327,123 @@ def _plot_length_scales(gp_history: list, out: Path) -> None:
     fig.savefig(out, dpi=150, bbox_inches="tight"); plt.close(fig)
 
 
+def _plot_gp_marginals(gp_state: dict, out: Path) -> None:
+    """
+    One subplot per parameter: GP posterior mean (line) ± 1σ band (fill),
+    observed (x_i, score_i) scatter, and a vertical line at the best-observed value.
+    Requires the "_reloadable" key produced by fit_gp_surrogate().
+    """
+    reloadable = gp_state.get("_reloadable")
+    if not reloadable or "marginals" not in reloadable:
+        return
+    plt = _get_plt()
+    if plt is None:
+        return
+
+    marginals  = reloadable["marginals"]
+    n_params   = len(PARAM_NAMES)
+    n_cols     = 3
+    n_rows     = (n_params + n_cols - 1) // n_cols
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 4 * n_rows))
+    axes_flat = axes.flatten() if n_params > 1 else [axes]
+
+    for ax, pname in zip(axes_flat, PARAM_NAMES):
+        m       = marginals[pname]
+        x_raw   = m["x_raw"]
+        mean    = m["mean"]
+        std_lo  = m["std_lo"]
+        std_hi  = m["std_hi"]
+        obs_x   = m["obs_x"]
+        obs_y   = m["obs_y"]
+        best_x  = m["best_x"]
+        best_y  = m["best_y"]
+
+        ax.fill_between(x_raw, std_lo, std_hi, alpha=0.25, color="steelblue", label="±1σ")
+        ax.plot(x_raw, mean, color="steelblue", lw=2, label="GP mean")
+        ax.scatter(obs_x, obs_y, s=25, color="dimgray", alpha=0.7, zorder=3, label="Observed")
+        ax.axvline(best_x, color="crimson", lw=1.5, linestyle="--", label=f"Best ({best_x:.2f})")
+        ax.scatter([best_x], [best_y], color="crimson", s=60, zorder=4)
+
+        ax.set_xlabel(pname, fontsize=9)
+        ax.set_ylabel("Score", fontsize=9)
+        ax.set_title(pname, fontsize=10)
+        ax.legend(fontsize=7, loc="best")
+        ax.grid(alpha=0.3)
+
+    # Hide unused subplots
+    for ax in axes_flat[n_params:]:
+        ax.set_visible(False)
+
+    n_obs = len(reloadable.get("y", []))
+    fig.suptitle(
+        f"GP Posterior Marginals — {n_obs} observations\n"
+        "(each panel: one param swept, all others fixed at best-observed value)",
+        fontsize=11,
+    )
+    plt.tight_layout()
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    log.debug("[plot] gp_marginals saved  %s", out)
+
+
+def _plot_gp_fitted_vs_actual(gp_state: dict, out: Path) -> None:
+    """
+    Scatter: GP posterior mean at every training point (x-axis = observed score,
+    y-axis = GP prediction). Points coloured by trial order. Perfect fit = diagonal.
+    Includes R² and RMSE in the title.
+    """
+    reloadable = gp_state.get("_reloadable")
+    if not reloadable or "y" not in reloadable or "y_pred_mean" not in reloadable:
+        return
+    plt = _get_plt()
+    if plt is None:
+        return
+
+    y_true = np.array(reloadable["y"])
+    y_pred = np.array(reloadable["y_pred_mean"])
+    y_std  = np.array(reloadable["y_pred_std"])
+    n      = len(y_true)
+
+    # R² and RMSE
+    ss_res = float(np.sum((y_true - y_pred) ** 2))
+    ss_tot = float(np.sum((y_true - y_true.mean()) ** 2))
+    r2     = 1.0 - ss_res / max(ss_tot, 1e-12)
+    rmse   = float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+    sc = ax.scatter(
+        y_true, y_pred,
+        c=np.arange(n), cmap="viridis",
+        s=60, zorder=3, alpha=0.85,
+    )
+    ax.errorbar(
+        y_true, y_pred, yerr=y_std,
+        fmt="none", ecolor="gray", alpha=0.4, lw=1, zorder=2,
+    )
+    # Perfect-fit diagonal
+    lo = min(y_true.min(), y_pred.min()) - 0.02
+    hi = max(y_true.max(), y_pred.max()) + 0.02
+    ax.plot([lo, hi], [lo, hi], "r--", lw=1.5, label="Perfect fit")
+
+    plt.colorbar(sc, ax=ax, label="Trial index")
+    ax.set_xlabel("Observed score")
+    ax.set_ylabel("GP predicted mean")
+    ax.set_title(
+        f"GP Fitted vs Actual  (n={n})\n"
+        f"R²={r2:.3f}   RMSE={rmse:.4f}"
+    )
+    ax.legend(fontsize=9)
+    ax.grid(alpha=0.3)
+    plt.tight_layout()
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    log.debug("[plot] gp_fitted_vs_actual saved  %s", out)
+
+
 # ─── Disk cleanup (FIX-7) ────────────────────────────────────────────────────
 
 def _cleanup_old_bags(results_dir: Path, keep_last_n: int) -> None:
-    """Delete rosbag directories from all but the most recent N trials."""
     if keep_last_n <= 0:
         return
     trial_dirs = sorted(results_dir.glob("trial_???"))
@@ -1083,7 +1462,7 @@ class BayesianMPCTuner:
     def __init__(self, gui: bool = False):
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
         global log
-        log = _setup_logger(RESULTS_DIR)  # FIX-9: structured logging
+        log = _setup_logger(RESULTS_DIR)
 
         self._base_params  = _load_yaml(BASE_PARAMS)
         self._sim          = SimulationManager(gui=gui)
@@ -1097,8 +1476,59 @@ class BayesianMPCTuner:
         self._hp_trials    = Trials()
         self._run_start_t: Optional[float] = None
         self._executor: Optional[SingleThreadedExecutor] = None
+        # Keep last GP state for _persist() to use in plots
+        self._last_gp_state: Optional[dict] = None
 
-    # FIX-1: single rclpy init/shutdown lifecycle
+    def _load_checkpoint(self) -> int:
+        """
+        Restore state from a previous interrupted run.
+        Returns the number of trials already completed (0 if nothing to restore).
+        """
+        results_path = RESULTS_DIR / "results.json"
+        if not results_path.exists():
+            log.warning("[resume] %s not found — starting fresh", results_path)
+            return 0
+
+        with open(results_path) as f:
+            saved = json.load(f)
+
+        trials_data = saved.get("trials", [])
+        if not trials_data:
+            log.warning("[resume] results.json has no trials — starting fresh")
+            return 0
+
+        self._history = [
+            {"trial": t["trial"], "params": t["params"], "score": t["score"]}
+            for t in trials_data
+        ]
+        self._best_score  = float(saved.get("best_score", -np.inf))
+        self._best_params = saved.get("best_params")
+        self._best_trial  = int(saved.get("best_trial", -1))
+
+        gp_history_path = RESULTS_DIR / "gp_history.json"
+        if gp_history_path.exists():
+            with open(gp_history_path) as f:
+                self._gp_history = json.load(f)
+
+        last_trial_num = trials_data[-1]["trial"]
+        last_trial_dir = RESULTS_DIR / f"trial_{last_trial_num:03d}"
+        hp_path        = last_trial_dir / "hp_trials.joblib"
+        if hp_path.exists():
+            try:
+                import joblib
+                self._hp_trials = joblib.load(hp_path)
+                log.info("[resume] loaded hp_trials (%d entries) from %s",
+                         len(self._hp_trials.trials), hp_path)
+            except Exception as exc:
+                log.warning("[resume] hp_trials load failed (%s) — fresh TPE state", exc)
+        else:
+            log.warning("[resume] %s not found — fresh TPE state (GP history still loaded)", hp_path)
+
+        self._trial_num = last_trial_num
+        log.info("[resume] restored %d trials  best=%.4f (t%03d)",
+                 last_trial_num, self._best_score, self._best_trial)
+        return last_trial_num
+
     def _ros_init(self) -> None:
         if not rclpy.ok():
             rclpy.init()
@@ -1124,20 +1554,17 @@ class BayesianMPCTuner:
         scenario_dir = trial_dir / f"scenario_{sc_name}"
         scenario_dir.mkdir(parents=True, exist_ok=True)
 
-        # FIX-9: structured log IDs
-        log_prefix = f"[T{trial_num:03d}/SC{sc_idx}/{sc_name}]"
+        log_prefix     = f"[T{trial_num:03d}/SC{sc_idx}/{sc_name}]"
+        failure_reason: Optional[str] = None
         log.info("%s starting", log_prefix)
 
         bag = RosbagRecorder(scenario_dir / "rosbag")
-        failure_reason: Optional[str] = None
 
         try:
-            # FIX-3: launch reuses Gazebo if world unchanged
             self._sim.launch(params_yaml, scenario)
             bag.start()
 
             log.info("%s waiting 10s for Gazebo bridge…", log_prefix)
-            # FIX-10: interruptible sleep with heartbeat (FIX-9)
             _heartbeat_sleep(10, log_prefix)
             log.info("%s spawning obstacles…", log_prefix)
             self._sim.spawn_obstacles(scenario)
@@ -1146,7 +1573,6 @@ class BayesianMPCTuner:
             log.info("%s waiting %ds for planner…", log_prefix, remaining_delay)
             _heartbeat_sleep(remaining_delay, log_prefix)
 
-            # FIX-1: create monitor node, add to executor
             monitor = PerformanceMonitor()
             if self._executor:
                 self._executor.add_node(monitor)
@@ -1157,21 +1583,22 @@ class BayesianMPCTuner:
             monitor.start(goals[0][0], goals[0][1])
             log.info("%s nav started — %d goal(s), timeout=%ds", log_prefix, len(goals), timeout)
 
-            current_idx    = 0
-            goals_reached  = [False] * len(goals)
-            end_t          = time.time() + timeout
-            # FIX-11: global trial timeout guard
-            global_end_t   = time.time() + GLOBAL_TRIAL_TIMEOUT
-            last_log_t     = 0.0
-            nav_start_t    = time.time()
-            initial_dist   = float(np.hypot(
+            current_idx     = 0
+            goals_reached   = [False] * len(goals)
+            end_t           = time.time() + timeout
+            global_end_t    = time.time() + GLOBAL_TRIAL_TIMEOUT
+            last_log_t      = 0.0
+            last_goal_pub_t = time.time()
+            nav_start_t     = time.time()
+            # initial_dist is set from the first real pose message, not the spawn
+            # config — this avoids stale-pose errors when reset fails.
+            initial_dist  = float(np.hypot(
                 goals[0][0] - scenario.get("robot_x", 0.0),
                 goals[0][1] - scenario.get("robot_y", 0.0),
             ))
+            initial_dist_set_from_pose = False  # will be overridden on first pose
 
-            # FIX-10: condition-based loop, no unconditional sleeps
             while time.time() < end_t and time.time() < global_end_t:
-                # FIX-1: spin via executor rather than rclpy.spin_once
                 if self._executor:
                     self._executor.spin_once(timeout_sec=0.05)
                 else:
@@ -1179,12 +1606,27 @@ class BayesianMPCTuner:
 
                 now = time.time()
 
-                # FIX-4: early termination check
+                # Update initial_dist from the first real pose so that if the
+                # robot reset failed and the robot is elsewhere, the progress
+                # metric is still meaningful.
+                if not initial_dist_set_from_pose and monitor.trajectory:
+                    _, rx, ry, _ = monitor.trajectory[0]
+                    gx0, gy0     = goals[0]
+                    initial_dist = float(np.hypot(rx - gx0, ry - gy0))
+                    initial_dist_set_from_pose = True
+                    log.debug(
+                        "%s initial_dist set from first pose: %.2fm  pos=(%.2f,%.2f)",
+                        log_prefix, initial_dist, rx, ry,
+                    )
+
+                # Republish the current goal every 5 s — guards against the planner
+                # missing the one-shot publish (QoS transient / timing race).
+                if (now - last_goal_pub_t) >= 5.0:
+                    monitor.republish_last_goal()
+                    last_goal_pub_t = now
+
                 term_reason = _check_early_termination(
-                    monitor,
-                    tuple(goals[current_idx]),
-                    initial_dist,
-                    now,
+                    monitor, tuple(goals[current_idx]), initial_dist, now, nav_start_t,
                 )
                 if term_reason:
                     failure_reason = f"early_term: {term_reason}"
@@ -1194,7 +1636,7 @@ class BayesianMPCTuner:
                 if monitor.trajectory:
                     _, x, y, _ = monitor.trajectory[-1]
                     gx, gy = goals[current_idx]
-                    dist = float(np.hypot(x - gx, y - gy))
+                    dist   = float(np.hypot(x - gx, y - gy))
 
                     if dist < 0.5:
                         goals_reached[current_idx] = True
@@ -1206,16 +1648,12 @@ class BayesianMPCTuner:
                         if current_idx >= len(goals):
                             break
                         monitor.publish_goal(goals[current_idx][0], goals[current_idx][1])
+                        last_goal_pub_t = now
                         initial_dist = float(np.hypot(
                             goals[current_idx][0] - x, goals[current_idx][1] - y,
                         ))
-                        log.info(
-                            "%s → next goal %d/%d: (%.1f,%.1f)",
-                            log_prefix, current_idx + 1, len(goals),
-                            goals[current_idx][0], goals[current_idx][1],
-                        )
+                        nav_start_t = now  # reset grace period for the new goal
 
-                    # FIX-9: periodic heartbeat status
                     if now - last_log_t >= NAV_LOG_INTERVAL:
                         vx = vy = 0.0
                         if monitor.cmd_history:
@@ -1246,7 +1684,7 @@ class BayesianMPCTuner:
                 failure_reason = failure_reason or "global_trial_timeout"
 
             goals_reached_frac = sum(goals_reached) / len(goals)
-            final_goal = tuple(goals[-1])
+            final_goal         = tuple(goals[-1])
             log.info(
                 "%s nav done — goals %d/%d (%.0f%%)  elapsed=%.0fs  failure=%s",
                 log_prefix, sum(goals_reached), len(goals),
@@ -1260,7 +1698,6 @@ class BayesianMPCTuner:
             if failure_reason:
                 metrics["failure_reason"] = failure_reason
 
-            # FIX-1: remove node from executor before destroying
             if self._executor:
                 try:
                     self._executor.remove_node(monitor)
@@ -1274,20 +1711,18 @@ class BayesianMPCTuner:
             score   = 0.0
             metrics = {"error": str(exc), "score": 0.0, "failure_reason": failure_reason}
         finally:
-            # FIX-2: rosbag stopped before simulation kill
             bag.stop()
-            # FIX-3: do NOT kill sim here — reused across scenarios within a trial
 
         metrics["scenario"] = sc_name
         metrics["weight"]   = scenario["weight"]
         return metrics
 
-    # ── Objective function ────────────────────────────────────────────────────
+    # ── Objective / trial runner ──────────────────────────────────────────────
 
     def _objective(self, params: dict) -> dict:
         self._trial_num += 1
-        trial_num  = self._trial_num
-        trial_dir  = RESULTS_DIR / f"trial_{trial_num:03d}"
+        trial_num = self._trial_num
+        trial_dir = RESULTS_DIR / f"trial_{trial_num:03d}"
         trial_dir.mkdir(parents=True, exist_ok=True)
 
         now = time.time()
@@ -1299,22 +1734,17 @@ class BayesianMPCTuner:
             avg_sec = (now - self._run_start_t) / completed
             eta_str = f"  ETA ~{avg_sec * (self._max_evals - completed) / 60:.0f}min"
 
-        n_random  = getattr(self, "_n_random", N_RANDOM_INIT)
-        mode_tag  = "RANDOM INIT" if trial_num <= n_random else "TPE-GUIDED"
+        n_random = getattr(self, "_n_random", N_RANDOM_INIT)
+        mode_tag = "RANDOM INIT" if trial_num <= n_random else "TPE-GUIDED"
         log.info("=" * 60)
-        log.info(
-            "Trial %03d/%d  [%s]  %s%s",
-            trial_num, self._max_evals, mode_tag, _ts(), eta_str,
-        )
+        log.info("Trial %03d/%d  [%s]  %s%s", trial_num, self._max_evals, mode_tag, _ts(), eta_str)
         log.info("Params: %s", {k: f"{v:.3f}" for k, v in params.items()})
         log.info("=" * 60)
 
-        # FIX-11: catch-all wrapper so optimisation always continues
         try:
             return self._run_trial(params, trial_num, trial_dir)
         except Exception as exc:
-            log.error("[trial %03d] unhandled exception — returning zero score: %s", trial_num, exc, exc_info=True)
-            # Ensure clean simulation state before next trial
+            log.error("[trial %03d] unhandled exception — zero score: %s", trial_num, exc, exc_info=True)
             try:
                 self._sim.kill()
             except Exception:
@@ -1322,8 +1752,6 @@ class BayesianMPCTuner:
             return {"loss": 0.0, "status": STATUS_OK, "score": 0.0}
 
     def _run_trial(self, params: dict, trial_num: int, trial_dir: Path) -> dict:
-        """Inner trial logic — separated so _objective can catch all exceptions."""
-        # Write trial YAML
         trial_yaml_data   = build_trial_yaml(self._base_params, params, trial_num)
         trial_params_path = trial_dir / "planner_params.yaml"
         _save_yaml(trial_yaml_data, trial_params_path)
@@ -1332,12 +1760,11 @@ class BayesianMPCTuner:
         scenario_results = []
         aggregate_score  = 0.0
 
-        n_scenarios = len(SCENARIOS)
         for sc_idx, scenario in enumerate(SCENARIOS, start=1):
             sc_goals = scenario.get("goals", [[scenario.get("goal_x"), scenario.get("goal_y")]])
             log.info(
                 "── Scenario %d/%d: %s  (%d goals)  weight=%.2f ──",
-                sc_idx, n_scenarios, scenario["name"], len(sc_goals), scenario["weight"],
+                sc_idx, len(SCENARIOS), scenario["name"], len(sc_goals), scenario["weight"],
             )
             result          = self._run_scenario(scenario, trial_params_path, trial_dir, trial_num, sc_idx)
             weighted        = result.get("score", 0.0) * scenario["weight"]
@@ -1354,12 +1781,10 @@ class BayesianMPCTuner:
                 result.get("n_cloud_msgs", 0),
             )
 
-        # FIX-3: kill sim after all scenarios in trial complete
         self._sim.kill()
-
         elapsed = time.time() - t0
 
-        # GP surrogate
+        # ── GP surrogate ──────────────────────────────────────────────────────
         self._history.append({
             "trial":  trial_num,
             "params": {k: float(v) for k, v in params.items()},
@@ -1367,6 +1792,7 @@ class BayesianMPCTuner:
         })
         log.info("[GP] fitting on %d observations…", len(self._history))
         gp_state = fit_gp_surrogate(self._history)
+
         if "param_sensitivity" in gp_state:
             top = sorted(gp_state["param_sensitivity"].items(), key=lambda kv: kv[1], reverse=True)[:5]
             log.info(
@@ -1383,13 +1809,27 @@ class BayesianMPCTuner:
 
         gp_state["trial"]     = trial_num
         gp_state["timestamp"] = datetime.utcnow().isoformat() + "Z"
-        self._gp_history.append(gp_state)
-        _save_json(gp_state, trial_dir / "gp_surrogate.json")
 
-        # TPE snapshot
+        # Save per-trial checkpoint (full reloadable data + joblib model)
+        save_gp_checkpoint(gp_state, trial_dir)
+
+        # Strip private keys before putting into JSON history
+        gp_state_json = _gp_state_for_json(gp_state)
+        self._gp_history.append(gp_state_json)
+        _save_json(gp_state_json, trial_dir / "gp_surrogate.json")
+
+        # Keep live state for _persist() plot functions
+        self._last_gp_state = gp_state
+
+        # ── TPE snapshot ──────────────────────────────────────────────────────
         _save_json(serialize_tpe_state(self._hp_trials, trial_num), trial_dir / "tpe_state.json")
+        try:
+            import joblib as _jl
+            _jl.dump(self._hp_trials, trial_dir / "hp_trials.joblib")
+        except Exception as _exc:
+            log.warning("[resume] hp_trials save failed (non-fatal): %s", _exc)
 
-        # Metadata
+        # ── Metadata ──────────────────────────────────────────────────────────
         metadata = {
             "trial":           trial_num,
             "timestamp":       datetime.utcnow().isoformat() + "Z",
@@ -1405,7 +1845,7 @@ class BayesianMPCTuner:
         }
         _save_json(metadata, trial_dir / "metadata.json")
 
-        # Track best
+        # ── Track best ────────────────────────────────────────────────────────
         prev_best   = self._best_score
         is_new_best = aggregate_score > self._best_score
         if is_new_best:
@@ -1416,9 +1856,7 @@ class BayesianMPCTuner:
             log.info("*** NEW BEST  score=%.4f (+%.4f)  trial=%03d ***",
                      aggregate_score, aggregate_score - prev_best, trial_num)
 
-        # Persist + cleanup
         self._persist(trial_num)
-        # FIX-7: disk cleanup
         _cleanup_old_bags(RESULTS_DIR, BAG_KEEP_LAST_N_TRIALS)
 
         gp_status = (
@@ -1453,17 +1891,41 @@ class BayesianMPCTuner:
         }
         _save_json(summary,          RESULTS_DIR / "results.json")
         _save_json(self._gp_history, RESULTS_DIR / "gp_history.json")
-        _plot_convergence([{"score": t["score"]} for t in self._history], RESULTS_DIR / "convergence.png")
+
+        _plot_convergence(
+            [{"score": t["score"]} for t in self._history],
+            RESULTS_DIR / "convergence.png",
+        )
         _plot_param_importance(self._gp_history, RESULTS_DIR / "param_importance.png")
         _plot_length_scales(self._gp_history,    RESULTS_DIR / "length_scales.png")
 
+        # New GP plots — require live _reloadable data from last GP fit
+        if self._last_gp_state is not None:
+            _plot_gp_marginals(
+                self._last_gp_state,
+                RESULTS_DIR / "gp_marginals.png",
+            )
+            _plot_gp_fitted_vs_actual(
+                self._last_gp_state,
+                RESULTS_DIR / "gp_fitted_vs_actual.png",
+            )
+
     # ── Entry point ───────────────────────────────────────────────────────────
 
-    def run(self, max_evals: int = MAX_EVALS, n_random: int = N_RANDOM_INIT) -> None:
+    def run(self, max_evals: int = MAX_EVALS, n_random: int = N_RANDOM_INIT,
+            resume: bool = False) -> None:
         self._n_random  = n_random
         self._max_evals = max_evals
 
-        # FIX-1: single rclpy.init() for the entire run
+        if resume:
+            completed = self._load_checkpoint()
+            if completed >= max_evals:
+                log.info("[resume] already completed %d/%d trials — nothing to do",
+                         completed, max_evals)
+                return
+            log.info("[resume] continuing from trial %d  (%d remaining)",
+                     completed, max_evals - completed)
+
         self._ros_init()
 
         try:
@@ -1487,7 +1949,8 @@ class BayesianMPCTuner:
         if sklearn_ok:
             log.info("# [OK] scikit-learn %s — GP active from trial %d", sklearn_ver, n_random + 1)
         else:
-            log.warning("# [!!] scikit-learn NOT INSTALLED — install with: pip install scikit-learn")
+            log.warning("# [!!] scikit-learn NOT INSTALLED — pip install scikit-learn")
+        log.info("# [OK] joblib required for gp_model.joblib — pip install joblib")
         log.info("#" * 60)
 
         try:
@@ -1504,7 +1967,6 @@ class BayesianMPCTuner:
             log.info("[Interrupted] saving partial results…")
         finally:
             self._persist(self._trial_num)
-            # FIX-1: single shutdown
             self._ros_shutdown()
 
         log.info("=" * 60)
@@ -1519,7 +1981,6 @@ class BayesianMPCTuner:
 # ─── Heartbeat sleep (FIX-9, FIX-10) ─────────────────────────────────────────
 
 def _heartbeat_sleep(seconds: float, prefix: str = "", interval: float = 10.0) -> None:
-    """Sleep for `seconds` with periodic heartbeat log lines."""
     elapsed = 0.0
     while elapsed < seconds:
         chunk    = min(interval, seconds - elapsed)
@@ -1536,9 +1997,14 @@ if __name__ == "__main__":
     import argparse
 
     ap = argparse.ArgumentParser(description="Bayesian MPC tuner for Go2 (hardened)")
-    ap.add_argument("--trials",  type=int,  default=MAX_EVALS,     help="Total trials")
-    ap.add_argument("--random",  type=int,  default=N_RANDOM_INIT,  help="Random init trials")
-    ap.add_argument("--gui",     action="store_true",               help="Launch Gazebo/RViz with GUI")
+    ap.add_argument("--trials", type=int, default=MAX_EVALS,      help="Total trials")
+    ap.add_argument("--random", type=int, default=N_RANDOM_INIT,
+                    help="Random init trials (must be > 0 and < --trials)")
+    ap.add_argument("--gui",    action="store_true",               help="Launch Gazebo/RViz with GUI")
+    ap.add_argument("--resume", action="store_true",
+                    help="Continue from the last completed trial in TUNING_RESULTS_DIR")
     args = ap.parse_args()
 
-    BayesianMPCTuner(gui=args.gui).run(max_evals=args.trials, n_random=args.random)
+    BayesianMPCTuner(gui=args.gui).run(
+        max_evals=args.trials, n_random=args.random, resume=args.resume,
+    )
