@@ -1,0 +1,10 @@
+{
+  "trial": 8,
+  "n_trials": 1,
+  "losses": [
+    null
+  ],
+  "best_loss": Infinity,
+  "best_tid": null,
+  "Xi": []
+}

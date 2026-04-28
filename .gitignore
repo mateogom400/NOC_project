@@ -2,7 +2,6 @@
 /build/
 /install/
 /log/
-/tuning_results/
 
 # Python caches
 __pycache__/
