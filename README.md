@@ -18,25 +18,22 @@ flowchart TD
     ASTAR["A* Local Planner\nGaussian occupancy grid"]
     MPC["MPC Tracker\nkinematic model"]
     CTRL["Velocity Controller  →  Go2"]
-
     OPT["Bayesian Optimiser\nTPE + GP  ·  offline"]
 
     GOAL --> NAVGRAPH
     POSE --> NAVGRAPH
     NAVGRAPH -- waypoint --> ASTAR
-
-    POSE --> ASTAR
     LIDAR --> ASTAR
+    POSE --> ASTAR
     ASTAR -- path --> MPC
-
     POSE --> MPC
     LIDAR --> MPC
     MPC -- setpoint --> CTRL
-
     POSE --> CTRL
 
-    OPT -- tuned params --> MPC
-    OPT -- tuned params --> ASTAR
+    NAVGRAPH ~~~ OPT
+    OPT -. tuned params .-> ASTAR
+    OPT -. tuned params .-> MPC
 ```
 
 ---
