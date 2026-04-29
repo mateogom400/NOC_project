@@ -1,8 +1,8 @@
 # A* + MPC Planner for Go2 Quadruped
 
-Navigation stack for the Unitree Go2 quadruped robot, combining topological global planning, rolling-horizon local planning, and nonlinear MPC tracking.  
-An **odometry bridge** converts EKF output to a shared pose topic; a **LiDAR self-filter** removes robot body returns; a **navigation graph** provides topological global memory via Dijkstra search; an **A\* planner** builds a rolling Gaussian occupancy grid (with a persistent obstacle layer) and produces a collision-free local path; a **kinematic MPC** (CasADi/IPOPT, first-order lag dynamics, sigmoid obstacle barriers) tracks the path; a **setpoint controller** converts the MPC lookahead pose into body-frame velocity commands; and a **safety gate** enforces E-stop and watchdog timeouts.  
-MPC cost weights are found **offline** by a Bayesian optimiser (TPE + GP surrogate) running multi-scenario Gazebo trials.
+Local navigation stack for the Unitree Go2 quadruped robot.  
+A **topological graph** (Dijkstra) provides global memory; an **A\* planner** builds a rolling Gaussian occupancy map and produces a collision-free waypoint path; an **MPC tracker** follows that path while performing real-time obstacle avoidance; a **setpoint controller** converts the MPC lookahead pose into body-frame `/cmd_vel` commands; a **safety gate** enforces E-stop and watchdog timeouts.  
+MPC cost weights are tuned **offline** by a Bayesian optimiser (TPE + GP surrogate) over Gazebo simulation trials.
 
 ---
 
@@ -10,81 +10,53 @@ MPC cost weights are found **offline** by a Bayesian optimiser (TPE + GP surroga
 
 ```mermaid
 flowchart TD
-    %% ── Sensors & Goal ──────────────────────────────────────────────
-    ODOM["EKF Odometry"]
-    LIDAR["LiDAR  (raw cloud)"]
-    GOAL["Global Goal"]
+    ODOM["/odom/raw\n(Odometry)"]
+    LIDAR["/lidar/points\n(PointCloud2)"]
+    GOAL["/global_goal\n(PoseStamped)"]
 
-    %% ── Preprocessing ────────────────────────────────────────────────
     FILTER["cloud_self_filter\nbody mask · elevation filter"]
     BRIDGE["odom_to_pose_node\nOdometry → PoseStamped"]
 
-    %% ── Global planning ──────────────────────────────────────────────
     NAVGRAPH["navigation_graph_node\ntopological graph · Dijkstra"]
+    ASTAR["a_star_node\nGaussian grid map · A*"]
+    MPC["mpc_node\nkinematic MPC  (CasADi/IPOPT)"]
+    CMD["setpoint_to_cmd_vel_node\nP-controller  →  /cmd_vel"]
+    SAFETY["velocity_limiter_node\nE-stop · watchdog"]
+    GO2["Go2 Controller\n(CHAMP)"]
+    VIZ["Foxglove / RViz2"]
 
-    %% ── Local planning ───────────────────────────────────────────────
-    ASTAR["a_star_node\nGaussian occupancy grid · A*\npersistent obstacle map"]
-
-    %% ── Trajectory optimisation ─────────────────────────────────────
-    MPC["mpc_node\nkinematic MPC  (CasADi / IPOPT)\nlag dynamics · sigmoid obstacle barriers"]
-
-    %% ── Control & Safety ─────────────────────────────────────────────
-    CMD["setpoint_to_cmd_vel_node\nbody-frame P-controller"]
-    SAFETY["velocity_limiter_node\nE-stop · cmd_vel watchdog"]
-
-    %% ── Actuator ─────────────────────────────────────────────────────
-    GO2["Go2 / CHAMP controller"]
-
-    %% ── Visualisation ────────────────────────────────────────────────
-    VIZ[("Foxglove / RViz2\noccupancy grid · A* path\nMPC horizon · nav graph")]
-
-    %% ── Offline parameter optimisation ──────────────────────────────
-    subgraph OFFLINE ["  Offline — Bayesian MPC Parameter Optimisation  "]
-        direction LR
-        GAZEBO["Gazebo\nmulti-scenario simulation\nopen · warehouse · office"]
-        SCORE["Scorer\ngoal · efficiency · smoothness · safety"]
-        TPE["TPE optimiser  (hyperopt)\n+ GP surrogate  (ARD Matern-5/2)\nparameter importance analysis"]
-        BEST["best_planner_params.yaml"]
-        GAZEBO -->|"raw metrics"| SCORE
-        SCORE -->|"composite score"| TPE
-        TPE -->|"next trial"| GAZEBO
-        TPE --> BEST
-    end
-
+    OPT["Bayesian MPC Tuner\nGazebo · TPE + GP"]
     PARAMS(["planner_params.yaml"])
 
-    %% ── Main data flow ───────────────────────────────────────────────
     ODOM --> BRIDGE
     LIDAR --> FILTER
 
-    BRIDGE -- "pose" --> ASTAR
-    BRIDGE -- "pose" --> MPC
-    BRIDGE -- "pose" --> CMD
-    BRIDGE -- "pose" --> NAVGRAPH
+    BRIDGE -- pose --> NAVGRAPH
+    BRIDGE -- pose --> ASTAR
+    BRIDGE -- pose --> MPC
+    BRIDGE -- pose --> CMD
 
-    FILTER -- "filtered cloud" --> ASTAR
-    FILTER -- "filtered cloud" --> MPC
+    FILTER -- filtered cloud --> ASTAR
+    FILTER -- filtered cloud --> MPC
 
-    GOAL -- "goal" --> ASTAR
-    GOAL -- "goal" --> NAVGRAPH
+    GOAL --> NAVGRAPH
+    GOAL --> ASTAR
 
-    NAVGRAPH -- "graph waypoint" --> ASTAR
-    NAVGRAPH -. "graph markers" .-> VIZ
+    NAVGRAPH -- graph waypoint --> ASTAR
+    NAVGRAPH -. markers .-> VIZ
 
-    ASTAR -- "waypoint path" --> MPC
-    ASTAR -. "occupancy grid · path" .-> VIZ
+    ASTAR -- path --> MPC
+    ASTAR -. grid · path .-> VIZ
 
-    MPC -- "lookahead setpoint" --> CMD
-    MPC -. "predicted trajectory" .-> VIZ
+    MPC -- setpoint --> CMD
+    MPC -. predicted trajectory .-> VIZ
 
-    CMD -- "cmd_vel" --> SAFETY
-    SAFETY -- "safe cmd_vel" --> GO2
+    CMD --> SAFETY
+    SAFETY --> GO2
 
-    %% ── Offline → Online parameter deployment ────────────────────────
-    BEST -->|"deploy"| PARAMS
-    PARAMS -->|"weights & thresholds"| MPC
-    PARAMS -->|"grid & planner params"| ASTAR
-    PARAMS -->|"controller gains"| CMD
+    OPT -- optimal weights --> PARAMS
+    PARAMS -- MPC weights --> MPC
+    PARAMS -- planner params --> ASTAR
 ```
 
 ---
