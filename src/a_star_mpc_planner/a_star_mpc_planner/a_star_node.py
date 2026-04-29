@@ -142,6 +142,7 @@ class AStarNode(Node):
         self._goal[0] = msg.pose.position.x
         self._goal[1] = msg.pose.position.y
         self._goal[2] = msg.pose.position.z
+        self._nav_graph_wp = None
         self._goal_reached = False
         self._goal_initialized = True
 

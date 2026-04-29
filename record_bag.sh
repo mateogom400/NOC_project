@@ -17,13 +17,20 @@ ROS_SETUP="/opt/ros/jazzy/setup.bash"
 if [[ ! -f "$ROS_SETUP" ]]; then
     ROS_SETUP="/opt/ros/humble/setup.bash"
 fi
+
+# ROS setup scripts may reference unset variables when this script runs with
+# `set -u`. Temporarily disable nounset while sourcing them.
+set +u
 source "$ROS_SETUP"
+set -u
 
 # Try to source workspace setup if available
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_SETUP="$SCRIPT_DIR/../install/setup.bash"
 if [[ -f "$WORKSPACE_SETUP" ]]; then
+    set +u
     source "$WORKSPACE_SETUP"
+    set -u
 fi
 
 TOPICS=(
@@ -45,15 +52,17 @@ echo "Recording to: $OUTPUT_DIR"
 echo "Topics: ${TOPICS[*]}"
 echo "Press Ctrl-C to stop (or bag will auto-stop after ${DURATION:-unlimited} seconds)"
 
-DURATION_FLAG=""
 if [[ -n "$DURATION" ]]; then
-    DURATION_FLAG="--duration $DURATION"
+    timeout --signal INT --kill-after 10s "${DURATION}s" \
+        ros2 bag record \
+        --output "$OUTPUT_DIR/bag" \
+        --storage sqlite3 \
+        "${TOPICS[@]}"
+else
+    ros2 bag record \
+        --output "$OUTPUT_DIR/bag" \
+        --storage sqlite3 \
+        "${TOPICS[@]}"
 fi
-
-ros2 bag record \
-    --output "$OUTPUT_DIR/bag" \
-    --storage sqlite3 \
-    $DURATION_FLAG \
-    "${TOPICS[@]}"
 
 echo "Bag saved to: $OUTPUT_DIR/bag"

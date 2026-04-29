@@ -30,6 +30,7 @@ author: Lorenzo Ortolani
 """
 
 import heapq
+import math
 
 import numpy as np
 import rclpy
@@ -64,6 +65,7 @@ class NavGraphNode(Node):
 
         # ── Planning state ────────────────────────────────────────────
         self._robot_pos:    np.ndarray | None = None
+        self._robot_yaw:    float | None      = None
         self._global_goal:  np.ndarray | None = None
         self._waypoint_seq: list[int]         = []   # ordered node ids
         self._wp_idx:       int               = 0
@@ -107,6 +109,10 @@ class NavGraphNode(Node):
 
     def _pose_cb(self, msg: PoseStamped) -> None:
         self._robot_pos = np.array([msg.pose.position.x, msg.pose.position.y])
+        q = msg.pose.orientation
+        siny = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        self._robot_yaw = math.atan2(siny, cosy)
 
     def _goal_cb(self, msg: PoseStamped) -> None:
         new_goal = np.array([msg.pose.position.x, msg.pose.position.y])
@@ -242,7 +248,9 @@ class NavGraphNode(Node):
             return
 
         # Don't interfere when the goal is already inside the local grid
-        if self._goal_in_grid():
+        # except when the goal is behind the robot; in that case force
+        # graph-node traversal in order to reach the backward goal robustly.
+        if self._goal_in_grid() and not self._is_backward_goal():
             return
 
         # Advance past already-reached waypoints
@@ -292,6 +300,20 @@ class NavGraphNode(Node):
         ix = int((self._global_goal[0] - self._grid_minx) / self._grid_reso)
         iy = int((self._global_goal[1] - self._grid_miny) / self._grid_reso)
         return 0 <= ix < self._grid_cells and 0 <= iy < self._grid_cells
+
+    def _is_backward_goal(self) -> bool:
+        """
+        True when goal direction is behind current heading (>90 deg).
+        """
+        if self._robot_pos is None or self._global_goal is None or self._robot_yaw is None:
+            return False
+        gvec = self._global_goal - self._robot_pos
+        norm = float(np.linalg.norm(gvec))
+        if norm < 1e-3:
+            return False
+        gdir = gvec / norm
+        hdir = np.array([math.cos(self._robot_yaw), math.sin(self._robot_yaw)], dtype=float)
+        return float(np.dot(gdir, hdir)) < 0.0
 
     # ──────────────────────────────────────────────────────────────────
     # RViz visualisation
