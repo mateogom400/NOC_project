@@ -10,48 +10,33 @@ MPC cost weights are tuned **offline** by a Bayesian optimiser (TPE + GP surroga
 
 ```mermaid
 flowchart TD
-    ODOM["/odom/raw\n(Odometry)"]
-    LIDAR["/lidar/points\n(PointCloud2)"]
-    GOAL["/global_goal\n(PoseStamped)"]
+    POSE["Robot Pose"]
+    LIDAR["LiDAR"]
+    GOAL["Global Goal"]
 
-    FILTER["cloud_self_filter\nbody mask · elevation filter"]
-    BRIDGE["odom_to_pose_node\nOdometry → PoseStamped"]
+    NAVGRAPH["Navigation Graph\nDijkstra"]
+    ASTAR["A* Local Planner\nGaussian occupancy grid"]
+    MPC["MPC Tracker\nkinematic model"]
+    CTRL["Velocity Controller  →  Go2"]
 
-    NAVGRAPH["navigation_graph_node\ntopological graph · Dijkstra"]
-    ASTAR["a_star_node\nGaussian grid map · A*"]
-    MPC["mpc_node\nkinematic MPC  (CasADi/IPOPT)"]
-    CTRL["setpoint_to_cmd_vel_node · velocity_limiter_node · Go2\nP-controller  →  /cmd_vel  ·  E-stop  →  CHAMP"]
-    VIZ["Foxglove / RViz2"]
-
-    OPT["Bayesian MPC Tuner\nGazebo · TPE + GP"]
-    PARAMS(["planner_params.yaml"])
-
-    LIDAR --> FILTER
-    ODOM --> BRIDGE
-
-    BRIDGE -- pose --> NAVGRAPH
-    BRIDGE -- pose --> ASTAR
-    BRIDGE -- pose --> MPC
-    BRIDGE -- pose --> CTRL
-
-    FILTER -- filtered cloud --> ASTAR
-    FILTER -- filtered cloud --> MPC
+    OPT["Bayesian Optimiser\nTPE + GP  ·  offline"]
 
     GOAL --> NAVGRAPH
-    GOAL --> ASTAR
+    POSE --> NAVGRAPH
+    NAVGRAPH -- waypoint --> ASTAR
 
-    NAVGRAPH -- graph waypoint --> ASTAR
-    NAVGRAPH -. markers .-> VIZ
-
+    POSE --> ASTAR
+    LIDAR --> ASTAR
     ASTAR -- path --> MPC
-    ASTAR -. grid · path .-> VIZ
 
+    POSE --> MPC
+    LIDAR --> MPC
     MPC -- setpoint --> CTRL
-    MPC -. predicted trajectory .-> VIZ
 
-    OPT -- optimal weights --> PARAMS
-    PARAMS -- MPC weights --> MPC
-    PARAMS -- planner params --> ASTAR
+    POSE --> CTRL
+
+    OPT -- tuned params --> MPC
+    OPT -- tuned params --> ASTAR
 ```
 
 ---
