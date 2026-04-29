@@ -20,21 +20,19 @@ flowchart TD
     NAVGRAPH["navigation_graph_node\ntopological graph · Dijkstra"]
     ASTAR["a_star_node\nGaussian grid map · A*"]
     MPC["mpc_node\nkinematic MPC  (CasADi/IPOPT)"]
-    CMD["setpoint_to_cmd_vel_node\nP-controller  →  /cmd_vel"]
-    SAFETY["velocity_limiter_node\nE-stop · watchdog"]
-    GO2["Go2 Controller\n(CHAMP)"]
+    CTRL["setpoint_to_cmd_vel_node · velocity_limiter_node · Go2\nP-controller  →  /cmd_vel  ·  E-stop  →  CHAMP"]
     VIZ["Foxglove / RViz2"]
 
     OPT["Bayesian MPC Tuner\nGazebo · TPE + GP"]
     PARAMS(["planner_params.yaml"])
 
-    ODOM --> BRIDGE
     LIDAR --> FILTER
+    ODOM --> BRIDGE
 
     BRIDGE -- pose --> NAVGRAPH
     BRIDGE -- pose --> ASTAR
     BRIDGE -- pose --> MPC
-    BRIDGE -- pose --> CMD
+    BRIDGE -- pose --> CTRL
 
     FILTER -- filtered cloud --> ASTAR
     FILTER -- filtered cloud --> MPC
@@ -48,11 +46,8 @@ flowchart TD
     ASTAR -- path --> MPC
     ASTAR -. grid · path .-> VIZ
 
-    MPC -- setpoint --> CMD
+    MPC -- setpoint --> CTRL
     MPC -. predicted trajectory .-> VIZ
-
-    CMD --> SAFETY
-    SAFETY --> GO2
 
     OPT -- optimal weights --> PARAMS
     PARAMS -- MPC weights --> MPC
