@@ -1,0 +1,5 @@
+World,Method,SR (%),CE (m),Runs,Successes,Time-to-goal mean (s),Time-to-goal std (s)
+indoor_office,baseline,50.0,0.037607314483550695,2,1,84.81889033317566,nan
+indoor_office,bo_tuned,50.0,0.04844594870709687,2,1,52.264484167099,nan
+open_world,baseline,50.0,0.058990324768037304,2,1,41.55372953414917,nan
+open_world,bo_tuned,100.0,0.045774065942313945,2,2,41.9420450925827,1.0242839011796447

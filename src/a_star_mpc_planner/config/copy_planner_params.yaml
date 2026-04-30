@@ -13,7 +13,7 @@
     # ─────────────────────────────────────────────────────────────
     grid_reso: 0.25                # local grid cell size [m]
     grid_half_width: 10.0           # local map is 10 m x 10 m
-    grid_std: 0.30              # Gaussian spread [m] — 1-sigma inflation radius = 0.30 m
+    grid_std: 0.15              # Gaussian spread [m] — 1-sigma inflation radius = 0.30 m
     obstacle_threshold: 0.4       # = 1-Φ(1σ): blocks every cell within 1σ of any obstacle
     obstacle_cost_weight: 35.0      # normalized-quadratic weight — prefers wide paths without blocking doorways
     replan_rate_hz: 1.0            # lower refresh reduces path flicker while staying reactive

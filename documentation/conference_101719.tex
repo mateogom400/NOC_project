@@ -434,13 +434,11 @@ Each configuration is evaluated over 50 independent navigation episodes per envi
 
 \subsection{Navigation Performance}
 
-Tables~\ref{tab:main} and~\ref{tab:cr-eta} report the full performance comparison. Fig.~\ref{fig:convergence} shows the offline BO convergence and online adaptation trajectory. Fig.~\ref{fig:trajectories} shows representative navigation trajectories in E3.
+Tables~\ref{tab:main} and~\ref{tab:cr-eta} report the bag-based comparison between baseline and BO-tuned parameters on the currently available evaluation runs ($n=2$ trials per world and method). Fig.~\ref{fig:convergence} summarizes success-rate and cross-track-error differences, while Fig.~\ref{fig:trajectories} reports path-length and time-to-goal statistics.
 
-The fixed MPC baseline achieves satisfactory performance in the open environment (E1, SR\,=\,88\%) but degrades markedly in constrained and dynamic scenarios (E4: SR\,=\,48\%, CR\,=\,31\%). Offline BO on E1--E3 consistently improves all metrics, with success rates increasing by up to 22 percentage points in the corridor scenario (E2: 62\%\,$\to$\,84\%) and generalizing meaningfully to unseen environments (E4: 48\%\,$\to$\,64\%, E5: 44\%\,$\to$\,59\%), demonstrating that optimizing across diverse training scenarios provides positive transfer.
+On \textbf{open\_world}, BO tuning improves success rate from 50\% to 100\% and reduces cross-track error from 0.059\,m to 0.046\,m. On \textbf{indoor\_office}, both methods achieve 50\% success rate on the current two trials; however, BO tuning reduces mean time-to-goal on successful runs from 84.8\,s to 52.3\,s, while CE is slightly higher (0.038\,m to 0.048\,m).
 
-Online BO provides additional gains concentrated in the out-of-distribution environments: E4 improves from 64\% to 76\%, and E5 from 59\% to 73\%, as the GP-EI loop identifies environment-specific parameter adjustments not covered by the offline training distribution. These gains are measurable within the first 10 online episodes, owing to the warm-started GP that leverages the offline prior to direct exploration efficiently.
-
-GNN conditioning (Offline BO + GNN) yields gains comparable to Online BO on in-distribution environments, confirming that scan-level parameter adaptation captures real-time geometric context relevant for performance. The full proposed pipeline (Online BO + GNN) achieves the highest performance across all scenarios: 98\% SR in E1, 91\% in E2, 93\% in E3, 85\% in E4, and 82\% in E5, with cross-track RMSE below 0.10\,m in the open environment and below 0.25\,m in the most challenging unseen scenario. The collision rate is reduced to zero for in-distribution environments and to 8--11\% for unseen dynamic scenarios.
+These results are directionally consistent with the expected benefit of BO in less constrained spaces and indicate that more trials are required to obtain statistically stable conclusions in constrained indoor settings.
 
 \subsection{Parameter Sensitivity}
 
@@ -452,40 +450,34 @@ Table~\ref{tab:compute} reports the computational cost of each module. The core 
 
 \begin{table*}[t]
 	\centering
-	\caption{Navigation Performance: Success Rate (SR, \%) and Cross-Track RMSE (CE, m). Bold: best per column. E1--E3: in-distribution training environments; E4--E5: held-out out-of-distribution environments.}
+	\caption{Bag-based navigation performance from recorded runs. SR: success rate (\%); CE: cross-track error (m). Values are aggregated over $n=2$ trials per world and method.}
 	\label{tab:main}
 	\renewcommand{\arraystretch}{1.15}
-	\begin{tabular}{lcccccccccc}
+	\begin{tabular}{lccccc}
 		\toprule
-		                         & \multicolumn{2}{c}{\textbf{E1 (Open)}} & \multicolumn{2}{c}{\textbf{E2 (Corridor)}} & \multicolumn{2}{c}{\textbf{E3 (Cluttered)}} & \multicolumn{2}{c}{\textbf{E4 (Dynamic)}} & \multicolumn{2}{c}{\textbf{E5 (Multi-Room)}}                                                                             \\
-		\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}
-		\textbf{Method}          & SR                                     & CE                                         & SR                                          & CE                                        & SR                                           & CE            & SR          & CE            & SR          & CE            \\
+		                         & \multicolumn{2}{c}{\textbf{Open World}} & \multicolumn{2}{c}{\textbf{Indoor Office}} \\
+		\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+		\textbf{Method}          & SR (\%)                                 & CE (m)                                     & SR (\%)                                     & CE (m)            \\
 		\midrule
-		Fixed MPC                & 88                                     & 0.19                                       & 62                                          & 0.34                                      & 67                                           & 0.29          & 48          & 0.44          & 44          & 0.48          \\
-		Offline BO               & 95                                     & 0.12                                       & 84                                          & 0.22                                      & 88                                           & 0.19          & 64          & 0.35          & 59          & 0.40          \\
-		Online BO                & 97                                     & 0.10                                       & 87                                          & 0.17                                      & 90                                           & 0.15          & 76          & 0.26          & 73          & 0.30          \\
-		Offline BO + GNN         & 96                                     & 0.11                                       & 84                                          & 0.19                                      & 88                                           & 0.17          & 71          & 0.29          & 68          & 0.33          \\
-		\textbf{Online BO + GNN} & \textbf{98}                            & \textbf{0.08}                              & \textbf{91}                                 & \textbf{0.14}                             & \textbf{93}                                  & \textbf{0.12} & \textbf{85} & \textbf{0.20} & \textbf{82} & \textbf{0.24} \\
+		Baseline                 & 50                                      & 0.059                                      & 50                                          & \textbf{0.038} \\
+		BO Tuned                 & \textbf{100}                            & \textbf{0.046}                             & 50                                          & 0.048 \\
 		\bottomrule
 	\end{tabular}
 \end{table*}
 
 \begin{table*}[t]
 	\centering
-	\caption{Collision Rate (CR, \%) and Path Efficiency ($\eta$). Bold: best per column.}
+	\caption{Additional bag-based metrics. $T_g$: time-to-goal (successful runs only). $L$: mean executed path length over all runs.}
 	\label{tab:cr-eta}
 	\renewcommand{\arraystretch}{1.15}
-	\begin{tabular}{lcccccccccc}
+	\begin{tabular}{lcccc}
 		\toprule
-		                         & \multicolumn{2}{c}{\textbf{E1 (Open)}} & \multicolumn{2}{c}{\textbf{E2 (Corridor)}} & \multicolumn{2}{c}{\textbf{E3 (Cluttered)}} & \multicolumn{2}{c}{\textbf{E4 (Dynamic)}} & \multicolumn{2}{c}{\textbf{E5 (Multi-Room)}}                                                                            \\
-		\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}
-		\textbf{Method}          & CR                                     & $\eta$                                     & CR                                          & $\eta$                                    & CR                                           & $\eta$        & CR         & $\eta$        & CR          & $\eta$        \\
+		                         & \multicolumn{2}{c}{\textbf{Open World}} & \multicolumn{2}{c}{\textbf{Indoor Office}} \\
+		\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+		\textbf{Method}          & $T_g$ (s)                                & $L$ (m)                                     & $T_g$ (s)                                   & $L$ (m)         \\
 		\midrule
-		Fixed MPC                & 3                                      & 0.91                                       & 22                                          & 0.69                                      & 17                                           & 0.73          & 31         & 0.59          & 36          & 0.55          \\
-		Offline BO               & 0                                      & 0.95                                       & 10                                          & 0.82                                      & 8                                            & 0.86          & 21         & 0.70          & 26          & 0.65          \\
-		Online BO                & 0                                      & 0.96                                       & 6                                           & 0.86                                      & 4                                            & 0.89          & 13         & 0.79          & 17          & 0.77          \\
-		Offline BO + GNN         & 0                                      & 0.95                                       & 8                                           & 0.85                                      & 6                                            & 0.88          & 16         & 0.77          & 20          & 0.74          \\
-		\textbf{Online BO + GNN} & \textbf{0}                             & \textbf{0.97}                              & \textbf{3}                                  & \textbf{0.90}                             & \textbf{2}                                   & \textbf{0.92} & \textbf{8} & \textbf{0.86} & \textbf{11} & \textbf{0.83} \\
+		Baseline                 & \textbf{41.55}                          & 9.64                                        & 84.82                                       & 17.92 \\
+		BO Tuned                 & 41.94                                    & \textbf{9.03}                               & \textbf{52.26}                              & \textbf{12.13} \\
 		\bottomrule
 	\end{tabular}
 \end{table*}
@@ -512,15 +504,15 @@ Table~\ref{tab:compute} reports the computational cost of each module. The core 
 
 \begin{figure}[t]
 	\centering
-	\includegraphics[width=0.95\columnwidth]{assets/placeholder.png}
-	\caption{Left: offline BO convergence — aggregate score $\mathcal{J}(\theta)$ vs.\ trial index over 30 trials (shaded region: $\pm 1\sigma$ across scenarios). The dashed vertical line separates the random initialization phase from TPE-guided search. Right: online BO score evolution during deployment on E4 (dynamic, unseen), averaged over 15 episodes. The online GP rapidly converges beyond the offline initialization (dashed horizontal line).}
+	\includegraphics[width=0.95\columnwidth]{assets/bag_metrics_sr_ce.pdf}
+	\caption{Bag-based comparison of baseline and BO-tuned parameters on the currently available runs ($n=2$ trials per world and method). Left: success rate (SR). Right: cross-track error (CE).}
 	\label{fig:convergence}
 \end{figure}
 
 \begin{figure}[t]
 	\centering
-	\includegraphics[width=0.95\columnwidth]{assets/placeholder.png}
-	\caption{Representative navigation trajectories in E3 (Cluttered Static). Fixed MPC (red): jerky maneuvers and near-collision events. Offline BO (orange): smoother paths with improved clearance. Online BO + GNN (green, proposed): consistent, efficient trajectories closely following the A* reference (dashed) with maintained obstacle clearance throughout.}
+	\includegraphics[width=0.95\columnwidth]{assets/bag_metrics_time_path.pdf}
+	\caption{Additional bag-based metrics from recorded runs. Left: mean executed path length over all runs. Right: time-to-goal computed on successful runs only.}
 	\label{fig:trajectories}
 \end{figure}
 

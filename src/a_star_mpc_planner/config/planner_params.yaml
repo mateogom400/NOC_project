@@ -45,25 +45,25 @@
     # ─────────────────────────────────────────────────────────────
     # Tracking cost weights
     # ─────────────────────────────────────────────────────────────
-    mpc_Q_x: 300.0                  # x-axis (forward) position tracking weight
-    mpc_Q_y: 300.0                  # y-axis (lateral) position tracking weight — tuned separately
-    mpc_Q_yaw: 10.0                  # yaw tracking weight (low — A* segments are jagged)
-    mpc_Q_terminal: 100.0          # terminal state weight multiplier
+    mpc_Q_x: 81.406819              # x-axis (forward) position tracking weight
+    mpc_Q_y: 76.793851              # y-axis (lateral) position tracking weight — tuned separately
+    mpc_Q_yaw: 0.159859             # yaw tracking weight (low — A* segments are jagged)
+    mpc_Q_terminal: 184.780052      # terminal state weight multiplier
 
     # ─────────────────────────────────────────────────────────────
     # Control effort weights
     # ─────────────────────────────────────────────────────────────
-    mpc_R_vx: 0.5                  # forward velocity command effort
-    mpc_R_vy: 0.5                  # lateral velocity command effort — tuned separately
-    mpc_R_omega: 0.5               # angular velocity control effort
-    mpc_R_jerk: 1.0                # stronger penalty on control-rate change for smoother motion
+    mpc_R_vx: 9.948168              # forward velocity command effort
+    mpc_R_vy: 8.106174              # lateral velocity command effort — tuned separately
+    mpc_R_omega: 9.809461           # angular velocity control effort
+    mpc_R_jerk: 2.684864            # stronger penalty on control-rate change for smoother motion
 
     # ─────────────────────────────────────────────────────────────
     # Obstacle avoidance (logistic sigmoid barrier)
     # ─────────────────────────────────────────────────────────────
-    mpc_W_obs_sigmoid: 200.0        # A* already routes around obstacles; sigmoid is a close-range safety net only, before: 200
-    mpc_obs_alpha: 4.0             # lower steepness => better conditioning
-    mpc_obs_r: 0.45                # safety radius [m]
+    mpc_W_obs_sigmoid: 4.830974     # A* already routes around obstacles; sigmoid is a close-range safety net only, before: 200
+    mpc_obs_alpha: 13.438599        # lower steepness => better conditioning
+    mpc_obs_r: 0.098285             # safety radius [m]
     mpc_max_obs_constraints: 12    # fewer constraints improves robustness
     mpc_obs_check_radius: 3.0      # range to search for obstacles [m]
 
@@ -127,7 +127,7 @@
     # merged into the Gaussian grid every planning cycle, so walls
     # that left sensor range remain visible to A*.
     # Set map_decay_sec: 0.0 to keep all obstacles forever (static env).
-    map_decay_sec:  5.0   # seconds before an unconfirmed cell expires
+    map_decay_sec:  20.0   # seconds before an unconfirmed cell expires
     map_max_cells:  5000  # memory cap — oldest cells dropped when exceeded
 
     # ─────────────────────────────────────────────────────────────

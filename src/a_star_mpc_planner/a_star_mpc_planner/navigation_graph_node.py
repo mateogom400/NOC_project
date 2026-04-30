@@ -30,7 +30,6 @@ author: Lorenzo Ortolani
 """
 
 import heapq
-import math
 
 import numpy as np
 import rclpy
@@ -65,7 +64,6 @@ class NavGraphNode(Node):
 
         # ── Planning state ────────────────────────────────────────────
         self._robot_pos:    np.ndarray | None = None
-        self._robot_yaw:    float | None      = None
         self._global_goal:  np.ndarray | None = None
         self._waypoint_seq: list[int]         = []   # ordered node ids
         self._wp_idx:       int               = 0
@@ -110,9 +108,6 @@ class NavGraphNode(Node):
     def _pose_cb(self, msg: PoseStamped) -> None:
         self._robot_pos = np.array([msg.pose.position.x, msg.pose.position.y])
         q = msg.pose.orientation
-        siny = 2.0 * (q.w * q.z + q.x * q.y)
-        cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
-        self._robot_yaw = math.atan2(siny, cosy)
 
     def _goal_cb(self, msg: PoseStamped) -> None:
         new_goal = np.array([msg.pose.position.x, msg.pose.position.y])
@@ -191,17 +186,42 @@ class NavGraphNode(Node):
     # ──────────────────────────────────────────────────────────────────
 
     def _replan_graph_path(self) -> None:
-        if len(self._nodes) < 2 or self._global_goal is None:
+        if self._global_goal is None:
             return
 
         positions = self._nodes  # reference, not a copy
 
-        # Nearest node to robot and to goal
+        # If no nodes exist, clear path and let A* plan directly to goal
+        if not positions:
+            self._waypoint_seq = []
+            self._wp_idx       = 0
+            return
+
+        # Nearest node to robot
         start_id = min(positions, key=lambda i: np.linalg.norm(positions[i] - self._robot_pos))
+
+        # Check if goal is reachable directly from start node (or close enough)
+        start_to_goal_dist = float(np.linalg.norm(self._nodes[start_id] - self._global_goal))
+        
+        # If goal is very close to current best node, publish that node as final waypoint
+        if start_to_goal_dist < self._edge_radius and self._line_is_free(self._nodes[start_id], self._global_goal):
+            self._waypoint_seq = [start_id]
+            self._wp_idx       = 0
+            return
+
+        # If goal is in local grid, prefer to navigate toward it via A* instead of graph
+        if self._goal_in_grid():
+            # Goal is known and reachable — let A* plan directly
+            self._waypoint_seq = []
+            self._wp_idx       = 0
+            return
+
+        # Find nearest node to goal for multi-hop path
         goal_id  = min(positions, key=lambda i: np.linalg.norm(positions[i] - self._global_goal))
 
         if start_id == goal_id:
-            self._waypoint_seq = [start_id]
+            # No other nodes — fallback to direct A* planning toward goal
+            self._waypoint_seq = []
             self._wp_idx       = 0
             return
 
@@ -244,13 +264,12 @@ class NavGraphNode(Node):
     # ──────────────────────────────────────────────────────────────────
 
     def _publish_waypoint(self) -> None:
+        """
+        Publish the next waypoint in the graph path.
+        If no graph path exists, suppress waypoint publication and let A* plan directly to goal.
+        """
         if not self._waypoint_seq:
-            return
-
-        # Don't interfere when the goal is already inside the local grid
-        # except when the goal is behind the robot; in that case force
-        # graph-node traversal in order to reach the backward goal robustly.
-        if self._goal_in_grid() and not self._is_backward_goal():
+            # No graph waypoints — A* will navigate directly toward the global goal
             return
 
         # Advance past already-reached waypoints
@@ -300,20 +319,6 @@ class NavGraphNode(Node):
         ix = int((self._global_goal[0] - self._grid_minx) / self._grid_reso)
         iy = int((self._global_goal[1] - self._grid_miny) / self._grid_reso)
         return 0 <= ix < self._grid_cells and 0 <= iy < self._grid_cells
-
-    def _is_backward_goal(self) -> bool:
-        """
-        True when goal direction is behind current heading (>90 deg).
-        """
-        if self._robot_pos is None or self._global_goal is None or self._robot_yaw is None:
-            return False
-        gvec = self._global_goal - self._robot_pos
-        norm = float(np.linalg.norm(gvec))
-        if norm < 1e-3:
-            return False
-        gdir = gvec / norm
-        hdir = np.array([math.cos(self._robot_yaw), math.sin(self._robot_yaw)], dtype=float)
-        return float(np.dot(gdir, hdir)) < 0.0
 
     # ──────────────────────────────────────────────────────────────────
     # RViz visualisation

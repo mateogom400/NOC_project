@@ -1,0 +1,4 @@
+indoor_office & baseline & 50 & 0.04 \\
+indoor_office & bo_tuned & 50 & 0.05 \\
+open_world & baseline & 50 & 0.06 \\
+open_world & bo_tuned & 100 & 0.05 \\
