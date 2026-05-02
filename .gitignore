@@ -2,9 +2,10 @@
 /build/
 /install/
 /log/
+/bags_recordings/
 
 # Python caches
-__pycache__/
+__pycache__/Boot from the GParted Live USB you made with balenaEtcher
 *.py[cod]
 
 # Tooling caches

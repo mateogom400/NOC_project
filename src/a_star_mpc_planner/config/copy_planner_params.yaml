@@ -18,6 +18,8 @@
     obstacle_cost_weight: 35.0      # normalized-quadratic weight — prefers wide paths without blocking doorways
     replan_rate_hz: 1.0            # lower refresh reduces path flicker while staying reactive
     goal_reached_radius: 0.30      # stop replanning near goal
+    duplicate_goal_xy_tolerance: 0.05  # ignore repeated /global_goal messages within this XY distance [m]
+    duplicate_goal_z_tolerance: 0.05   # ignore repeated /global_goal messages within this Z distance [m]
     planning_height: 0.0
 
     # ─────────────────────────────────────────────────────────────

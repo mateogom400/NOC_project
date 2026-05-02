@@ -107,6 +107,23 @@ def extract_reference_points(reader, path_topic='/a_star/path', sample_step=2):
     return np.asarray(ref, dtype=np.float64), len(path_msgs)
 
 
+def extract_mpc_solving_times_ms(reader, diag_topic='/mpc/diagnostics'):
+    vals = []
+    for _, msg in get_ros_messages(reader, diag_topic):
+        data = getattr(msg, 'data', None)
+        if data is None or len(data) < 3:
+            continue
+        try:
+            v = float(data[2])
+        except Exception:
+            continue
+        if math.isfinite(v):
+            vals.append(v)
+    if not vals:
+        return np.empty((0,), dtype=np.float64)
+    return np.asarray(vals, dtype=np.float64)
+
+
 def calculate_cte(robot_path, reference_points):
     if not robot_path or reference_points is None or len(reference_points) == 0:
         return float('nan')
@@ -150,13 +167,14 @@ def calculate_path_length(path_xy):
 def discover_runs(metrics_dir: Path):
     known_methods = ['baseline', 'bo_opti', 'bo_tuned', 'planner_params', 'copy_planner_params']
     method_alias = {
-        'bo_opti': 'bo_tuned',
-        'planner_params': 'bo_tuned',
+        'bo_tuned': 'bo_opti',
+        'planner_params': 'bo_opti',
         'copy_planner_params': 'baseline',
     }
     world_alias = {
         'opne_world': 'open_world',
         'werehouse_env': 'warehouse',
+        'werehouse': 'warehouse',
     }
 
     run_items = []
@@ -172,6 +190,7 @@ def discover_runs(metrics_dir: Path):
                 method = km
                 world = run_name[:-len(f'_{km}')]
                 break
+
         method = method_alias.get(method, method)
         world = world_alias.get(world.strip().lower(), world.strip().lower())
 
@@ -182,11 +201,11 @@ def discover_runs(metrics_dir: Path):
             trial_idx = int(m.group(1)) if m else -1
 
             bag_dir_a = trial_dir / 'bag'
-            if (bag_dir_a / 'metadata.yaml').exists() and any(bag_dir_a.glob('bag_*.db3')):
+            if (bag_dir_a / 'metadata.yaml').exists() and any(bag_dir_a.glob('*.db3')):
                 run_items.append((world, method, trial_idx, bag_dir_a))
                 continue
 
-            if (trial_dir / 'metadata.yaml').exists() and any(trial_dir.glob('bag_*.db3')):
+            if (trial_dir / 'metadata.yaml').exists() and any(trial_dir.glob('*.db3')):
                 run_items.append((world, method, trial_idx, trial_dir))
                 continue
 
@@ -239,12 +258,15 @@ def main():
     print(f'Found {len(runs)} run bags in {metrics_dir}')
 
     per_run = []
+    pooled_mpc_solves = defaultdict(list)
+
     for world, method, trial_idx, bag_dir in runs:
         try:
             with Reader(str(bag_dir)) as reader:
                 ts, robot_path, final_pose, pose_source = extract_robot_trajectory(reader)
                 goal_pose, goal_source = extract_goal_pose(reader)
                 ref_pts, n_path_msgs = extract_reference_points(reader)
+                mpc_solve_ms = extract_mpc_solving_times_ms(reader)
 
                 success = 0
                 dist_final = float('nan')
@@ -256,6 +278,13 @@ def main():
                 t_goal = first_reach_time_sec(ts, robot_path, goal_pose[:2] if goal_pose else None, tol=args.goal_tol)
                 path_len = calculate_path_length(robot_path)
 
+                solve_mean = float(np.mean(mpc_solve_ms)) if mpc_solve_ms.size else float('nan')
+                solve_p95 = float(np.percentile(mpc_solve_ms, 95)) if mpc_solve_ms.size else float('nan')
+                solve_max = float(np.max(mpc_solve_ms)) if mpc_solve_ms.size else float('nan')
+
+                if mpc_solve_ms.size:
+                    pooled_mpc_solves[(world, method)].extend(mpc_solve_ms.tolist())
+
                 per_run.append({
                     'World': world,
                     'Method': method,
@@ -266,6 +295,10 @@ def main():
                     'Time-to-goal (s)': t_goal,
                     'Path length (m)': path_len,
                     'Final dist to goal (m)': dist_final,
+                    'MPC solve mean (ms)': solve_mean,
+                    'MPC solve p95 (ms)': solve_p95,
+                    'MPC solve max (ms)': solve_max,
+                    'MPC solve samples': int(mpc_solve_ms.size),
                     'pose_source': pose_source,
                     'goal_source': goal_source,
                     'n_path_msgs': int(n_path_msgs),
@@ -293,6 +326,11 @@ def main():
 
         tg_success = [x['Time-to-goal (s)'] for x in g if x['Success'] == 1 and not _isnan(x['Time-to-goal (s)'])]
 
+        pooled = np.asarray(pooled_mpc_solves.get((world, method), []), dtype=np.float64)
+        pooled_mean = float(np.mean(pooled)) if pooled.size else float('nan')
+        pooled_p95 = float(np.percentile(pooled, 95)) if pooled.size else float('nan')
+        pooled_max = float(np.max(pooled)) if pooled.size else float('nan')
+
         agg_rows.append({
             'World': world,
             'Method': method,
@@ -302,6 +340,10 @@ def main():
             'Successes': n_succ,
             'Time-to-goal mean (s)': float(np.mean(tg_success)) if tg_success else float('nan'),
             'Time-to-goal std (s)': float(np.std(tg_success, ddof=1)) if len(tg_success) > 1 else float('nan'),
+            'MPC solve mean (ms)': pooled_mean,
+            'MPC solve p95 (ms)': pooled_p95,
+            'MPC solve max (ms)': pooled_max,
+            'MPC solve samples': int(pooled.size),
         })
 
     per_run_path = out_dir / 'per_run_metrics.csv'
@@ -325,7 +367,10 @@ def main():
     with open(latex_path, 'w') as f:
         for row in agg_rows:
             ce = 'N/A' if _isnan(row['CE (m)']) else f"{row['CE (m)']:.2f}"
-            f.write(f"{row['World']} & {row['Method']} & {row['SR (%)']:.0f} & {ce} \\\\\n")
+            mpc_mean = 'N/A' if _isnan(row['MPC solve mean (ms)']) else f"{row['MPC solve mean (ms)']:.1f}"
+            f.write(
+                f"{row['World']} & {row['Method']} & {row['SR (%)']:.0f} & {ce} & {mpc_mean} \\\\n"
+            )
 
     print(f'\nSaved: {per_run_path}')
     print(f'Saved: {agg_path}')

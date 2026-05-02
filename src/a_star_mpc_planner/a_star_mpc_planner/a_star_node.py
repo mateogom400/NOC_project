@@ -56,6 +56,8 @@ class AStarNode(Node):
         self.declare_parameter('obstacle_cost_weight', 10.0)
         self.declare_parameter('replan_rate_hz',        2.0)
         self.declare_parameter('goal_reached_radius',   0.3)
+        self.declare_parameter('duplicate_goal_xy_tolerance', 0.05)
+        self.declare_parameter('duplicate_goal_z_tolerance', 0.05)
         self.declare_parameter('max_lidar_range',       6.0)
         self.declare_parameter('planning_height',       0.0)
         self.declare_parameter('map_decay_sec',        30.0)
@@ -71,6 +73,12 @@ class AStarNode(Node):
 
         self._planning_height = float(self.get_parameter('planning_height').value)
         self._goal_reached_radius = float(self.get_parameter('goal_reached_radius').value)
+        self._duplicate_goal_xy_tolerance = float(
+            self.get_parameter('duplicate_goal_xy_tolerance').value
+        )
+        self._duplicate_goal_z_tolerance = float(
+            self.get_parameter('duplicate_goal_z_tolerance').value
+        )
         self._max_lidar_range = float(self.get_parameter('max_lidar_range').value)
 
         # ── Algorithm objects ─────────────────────────────────────────
@@ -134,9 +142,26 @@ class AStarNode(Node):
         self._pose = msg
 
     def _goal_cb(self, msg: PoseStamped):
-        self._goal[0] = msg.pose.position.x
-        self._goal[1] = msg.pose.position.y
-        self._goal[2] = msg.pose.position.z
+        new_goal = np.array([
+            msg.pose.position.x,
+            msg.pose.position.y,
+            msg.pose.position.z,
+        ])
+
+        if self._goal_initialized:
+            xy_delta = float(np.linalg.norm(new_goal[:2] - self._goal[:2]))
+            z_delta = abs(float(new_goal[2] - self._goal[2]))
+            if (
+                xy_delta <= self._duplicate_goal_xy_tolerance
+                and z_delta <= self._duplicate_goal_z_tolerance
+            ):
+                self.get_logger().debug(
+                    f'[A*] Ignoring duplicate global goal: '
+                    f'xy_delta={xy_delta:.3f} m z_delta={z_delta:.3f} m'
+                )
+                return
+
+        self._goal = new_goal
         self._goal_reached = False
         self._goal_initialized = True
 

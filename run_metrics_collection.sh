@@ -1,207 +1,401 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# This script automates the process of running navigation experiments
-# for a single world and MPC parameter configurations (methods).
-# It launches the simulation, sends a series of goals, and records a ROS bag for each trial.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$SCRIPT_DIR"
 
-# --- Configuration ---
-METHODS=("copy_planner_params" "planner_params") # (baseline, bo_tuned)
-BAG_BASE_DIR="$(pwd)/bags_recordings/metrics_data"
-PARAMS_BASE_DIR="$(pwd)/src/a_star_mpc_planner/config"
-PLANNER_DELAY_SEC=5.0
-GUI="true" # Set to "true" to see the Gazebo GUI
-GOAL_REACHED_RADIUS=0.5
-GOAL_WAIT_TIMEOUT_SEC=120
+METRICS_BASE_DIR="${METRICS_BASE_DIR:-$REPO_ROOT/bags_recordings/metrics_data}"
+PARAMS_BASE_DIR="${PARAMS_BASE_DIR:-$REPO_ROOT/src/a_star_mpc_planner/config}"
+WORLD_BASE_DIR="${WORLD_BASE_DIR:-$REPO_ROOT/src/sim_worlds/worlds}"
+LAUNCH_PACKAGE="${LAUNCH_PACKAGE:-robot_sim}"
+LAUNCH_FILE="${LAUNCH_FILE:-sim_a_star_mpc.launch.py}"
 
-# --- Single World Setup ---
-WORLD_NAME="indoor_office"
+GUI="${GUI:-true}"
+USE_RVIZ="${USE_RVIZ:-true}"
+PLANNER_DELAY_SEC="${PLANNER_DELAY_SEC:-12.0}"
+STACK_STARTUP_SEC="${STACK_STARTUP_SEC:-8}"
+MISSION_STARTUP_DELAY_SEC="${MISSION_STARTUP_DELAY_SEC:-3.0}"
+GOAL_REACHED_RADIUS="${GOAL_REACHED_RADIUS:-0.35}"
+GOAL_WAIT_TIMEOUT_SEC="${GOAL_WAIT_TIMEOUT_SEC:-160}"
+POST_GOAL_SETTLE_SEC="${POST_GOAL_SETTLE_SEC:-2.0}"
+GOAL_REPUBLISH_SEC="${GOAL_REPUBLISH_SEC:-2.0}"
+MISSION_STATUS_LOG_SEC="${MISSION_STATUS_LOG_SEC:-10.0}"
+POST_RUN_RECORD_SEC="${POST_RUN_RECORD_SEC:-3.0}"
+CLEANUP_WAIT_SEC="${CLEANUP_WAIT_SEC:-25}"
+FORCE_OVERWRITE="${FORCE_OVERWRITE:-false}"
+RUN_EXTRACTION="${RUN_EXTRACTION:-true}"
 
-# Initial robot pose for this world
-ROBOT_INIT_X=0.0
-ROBOT_INIT_Y=0.0
-ROBOT_INIT_YAW=0.0
-
-# Define goals for this world
-# Format: "x,y,yaw"
-GOALS=(
-    "7.0,6.0,0.0"
-    "-7.0,-2.5,-1.57"
-)
-
-# --- Script Execution ---
-
-# Ensure the bag directory exists
-mkdir -p "$BAG_BASE_DIR"
-
-# Source ROS 2 environment
-source /opt/ros/humble/setup.bash
-if [ -f "install/setup.bash" ]; then
-    source "install/setup.bash"
-    echo "Sourced local workspace."
-else
-    echo "Warning: Local workspace not found or not built. Sourcing global ROS 2 only."
+ROS_SETUP="${ROS_SETUP:-/opt/ros/humble/setup.bash}"
+if [[ ! -f "$ROS_SETUP" && -f /opt/ros/jazzy/setup.bash ]]; then
+  ROS_SETUP=/opt/ros/jazzy/setup.bash
+fi
+if [[ ! -f "$ROS_SETUP" ]]; then
+  echo "ERROR: ROS setup file not found. Set ROS_SETUP=/opt/ros/<distro>/setup.bash" >&2
+  exit 1
 fi
 
-world_path="$(pwd)/src/sim_worlds/worlds/${WORLD_NAME}.world"
-world_name="$(basename "$WORLD_NAME" .world)"
+set +u
+source "$ROS_SETUP"
+set -u
+if [[ -f "$REPO_ROOT/install/setup.bash" ]]; then
+  set +u
+  source "$REPO_ROOT/install/setup.bash"
+  set -u
+fi
+export PYTHONPATH="$REPO_ROOT/src/a_star_mpc_planner:${PYTHONPATH:-}"
 
-wait_for_goal_reached() {
-    local goal_x="$1"
-    local goal_y="$2"
-    local timeout_sec="$3"
+mkdir -p "$METRICS_BASE_DIR"
+export ROS_LOG_DIR="${ROS_LOG_DIR:-$METRICS_BASE_DIR/ros_logs}"
+mkdir -p "$ROS_LOG_DIR"
 
-    python3 - "$goal_x" "$goal_y" "$timeout_sec" "$GOAL_REACHED_RADIUS" <<'PY'
-import math
-import sys
-import time
+METHODS=(baseline bo_optimized)
+declare -A METHOD_DIR_SUFFIX=(
+  [baseline]="baseline"
+  [bo_optimized]="bo_opti"
+)
 
-import rclpy
-from geometry_msgs.msg import PoseStamped
+WORLDS=(werehouse indoor_office open_world)
+declare -A WORLD_FILE=(
+  [werehouse]="warehouse.world"
+  [indoor_office]="indoor_office.world"
+  [open_world]="$REPO_ROOT/src/go2_sim/worlds/default.sdf"
+)
+declare -A WORLD_DIR_PREFIX=(
+  [werehouse]="werehouse"
+  [indoor_office]="indoor_office"
+  [open_world]="open_world"
+)
+declare -A WORLD_INIT_X=(
+  [werehouse]="0.0"
+  [indoor_office]="0.0"
+  [open_world]="0.0"
+)
+declare -A WORLD_INIT_Y=(
+  [werehouse]="0.0"
+  [indoor_office]="0.0"
+  [open_world]="0.0"
+)
+declare -A WORLD_INIT_YAW=(
+  [werehouse]="0.0"
+  [indoor_office]="0.0"
+  [open_world]="0.0"
+)
 
-goal_x = float(sys.argv[1])
-goal_y = float(sys.argv[2])
-timeout_sec = float(sys.argv[3])
-goal_radius = float(sys.argv[4])
+BAG_TOPICS=(
+  /odom
+  /go2/pose
+  /cmd_vel
+  /a_star/path
+  /mpc/next_setpoint
+  /mpc/predicted_path
+  /mpc/diagnostics
+  /goal_pose
+  /tf
+  /tf_static
+  /lidar/points_filtered
+)
 
-
-class MonitorNode(rclpy.node.Node):
-    def __init__(self):
-        super().__init__("goal_wait_monitor")
-        self.pose = None
-        self.create_subscription(PoseStamped, "/go2/pose", self._pose_cb, 10)
-
-    def _pose_cb(self, msg):
-        self.pose = msg
-
-
-def main() -> int:
-    rclpy.init()
-    node = MonitorNode()
-    start = time.time()
-    try:
-        while rclpy.ok() and (time.time() - start) < timeout_sec:
-            rclpy.spin_once(node, timeout_sec=0.2)
-            if node.pose is None:
-                continue
-
-            x = node.pose.pose.position.x
-            y = node.pose.pose.position.y
-            dist = math.hypot(x - goal_x, y - goal_y)
-            if dist <= goal_radius:
-                print(f"reached: pos=({x:.2f},{y:.2f}) goal=({goal_x:.2f},{goal_y:.2f}) dist={dist:.2f}")
-                return 0
-
-        if node.pose is None:
-            print("timeout: no /go2/pose received")
-        else:
-            x = node.pose.pose.position.x
-            y = node.pose.pose.position.y
-            dist = math.hypot(x - goal_x, y - goal_y)
-            print(f"timeout: pos=({x:.2f},{y:.2f}) goal=({goal_x:.2f},{goal_y:.2f}) dist={dist:.2f}")
-        return 1
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
-
-
-raise SystemExit(main())
-PY
+log() {
+  echo "[$(date +'%F %T')] $*"
 }
 
-for method in "${METHODS[@]}"; do
-    echo "--- Running Experiment: World='${WORLD_NAME}', Method='${method}' ---"
-    
-    # Pre-method cleanup: ensure no leftover ros2/gazebo/rosbag processes
-    echo "  Pre-clean: killing leftover ros2/rosbag/gz processes."
-    pkill -f "ros2 bag record" 2>/dev/null || true
-    pkill -f "ros2" 2>/dev/null || true
-    pkill -f "gzserver" 2>/dev/null || true
-    pkill -f "gzclient" 2>/dev/null || true
-    # small wait to let processes terminate
-    sleep 2
-    params_yaml="${PARAMS_BASE_DIR}/${method}.yaml"
-
-    if [ ! -f "$params_yaml" ]; then
-        echo "ERROR: Parameter file not found at ${params_yaml}. Skipping."
-        continue
-    fi
-
-    goal_count=0
-    for goal in "${GOALS[@]}"; do
-        goal_count=$((goal_count + 1))
-        IFS=',' read -r goal_x goal_y goal_yaw <<< "$goal"
-
-        echo "  Running Task #${goal_count} with Goal: (${goal_x}, ${goal_y})"
-
-        # Define bag file name
-        BAG_FILE="${BAG_BASE_DIR}/${WORLD_NAME}_${method}_goal_${goal_count}"
-        
-        # Start rosbag recording
-        echo "  Starting rosbag record. Saving to ${BAG_FILE}"
-        ros2 bag record -o "$BAG_FILE" /tf /tf_static /robot_description /scan /odom /cmd_vel /goal_pose /amcl_pose &
-        BAG_PID=$!
-
-        # Launch the simulation
-        # Launch in the background so we can stop it as soon as the goal is reached.
-        ros2 launch robot_sim sim_a_star_mpc.launch.py \
-            "gui:=${GUI}" \
-            "use_rviz:=${GUI}" \
-            "planner_params:=${params_yaml}" \
-            "wait_for_goal:=false" \
-            "goal_x:=${goal_x}" \
-            "goal_y:=${goal_y}" \
-            "goal_z:=0.0" \
-            "planner_delay_sec:=${PLANNER_DELAY_SEC}" \
-            "world:=${world_path}" \
-            "world_init_x:=${ROBOT_INIT_X}" \
-            "world_init_y:=${ROBOT_INIT_Y}" \
-            "world_init_heading:=${ROBOT_INIT_YAW}" &
-        LAUNCH_PID=$!
-
-        # Give Gazebo/planner time to come up, then wait until the robot reaches
-        # the goal (or the timeout is hit).
-        sleep 5
-        if wait_for_goal_reached "$goal_x" "$goal_y" "$GOAL_WAIT_TIMEOUT_SEC"; then
-            echo "  Goal reached — restarting from the starting position for the next goal."
-        else
-            echo "  Goal wait timed out — stopping the current run and continuing."
-        fi
-
-        # Stop the rosbag recording
-        echo "  Stopping rosbag record (PID: $BAG_PID)."
-        # Stop the rosbag recording politely and wait for it to finish
-        if kill -0 "$BAG_PID" 2>/dev/null; then
-            kill -SIGINT "$BAG_PID" 2>/dev/null || true
-            # wait up to 10s for the bag process to exit
-            timeout 10s bash -c "wait $BAG_PID" 2>/dev/null || true
-        fi
-
-        # Kill the launch and any remaining ROS/Gazebo nodes to ensure a clean start
-        # for the next goal run.
-        echo "  Cleaning up ROS and Gazebo nodes."
-        if kill -0 "$LAUNCH_PID" 2>/dev/null; then
-            kill -SIGINT "$LAUNCH_PID" 2>/dev/null || true
-            timeout 10s bash -c "wait $LAUNCH_PID" 2>/dev/null || true
-        fi
-        pkill -f "ros2 bag record" 2>/dev/null || true
-        pkill -f "ros2" 2>/dev/null || true
-        pkill -f "gzserver" 2>/dev/null || true
-        pkill -f "gzclient" 2>/dev/null || true
-
-        # Wait until no ros2 or rosbag or gz processes remain (max 15s)
-        for i in {1..15}; do
-            if ! pgrep -f "ros2" >/dev/null && ! pgrep -f "ros2 bag" >/dev/null && ! pgrep -f "gzserver" >/dev/null && ! pgrep -f "gzclient" >/dev/null; then
-                break
-            fi
-            sleep 1
-        done
-
-        # Kill any remaining ROS nodes to ensure a clean start for the next run
-        echo "  Cleaning up ROS nodes."
-        pkill -f "ros2"
-        sleep 5
-
+stop_pid() {
+  local pid="${1:-}"
+  if [[ -z "$pid" ]]; then
+    return 0
+  fi
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -SIGINT -- "-$pid" 2>/dev/null || true
+    kill -SIGINT "$pid" 2>/dev/null || true
+    for _ in {1..20}; do
+      if ! kill -0 "$pid" 2>/dev/null; then
+        return 0
+      fi
+      sleep 0.5
     done
-done
+    kill -SIGTERM -- "-$pid" 2>/dev/null || true
+    kill -SIGTERM "$pid" 2>/dev/null || true
+    sleep 1
+    kill -SIGKILL -- "-$pid" 2>/dev/null || true
+    kill -SIGKILL "$pid" 2>/dev/null || true
+  fi
+}
 
-echo "--- All experiments completed. ---"
+cleanup_orphans() {
+  local -a patterns=(
+    "ros2 bag record"
+    "mission_commander.py"
+    "sim_a_star_mpc.launch.py"
+    "sim_champ.launch.py"
+    "rviz2"
+    "ign gazebo"
+    "gz sim"
+    "gzserver"
+    "gzclient"
+    "robot_state_publisher"
+    "quadruped_controller_node"
+    "state_estimation_node"
+    "ekf_node"
+    "static_transform_publisher"
+    "parameter_bridge"
+    "ros_ign_gazebo.*create"
+    "controller_manager.*spawner"
+    "velocity_limiter"
+    "a_star_node"
+    "mpc_node"
+    "odom_to_pose_node"
+    "setpoint_to_cmd_vel_node"
+    "nav_graph_node"
+    "cloud_self_filter.py"
+  )
+  local pattern
+  local deadline
+
+  log "Cleaning previous ROS/Gazebo/RViz processes before next task."
+  for pattern in "${patterns[@]}"; do
+    pkill -INT -f "$pattern" 2>/dev/null || true
+  done
+  sleep 2
+
+  deadline=$((SECONDS + CLEANUP_WAIT_SEC))
+  while (( SECONDS < deadline )); do
+    local still_running=false
+    for pattern in "${patterns[@]}"; do
+      if pgrep -f "$pattern" >/dev/null 2>&1; then
+        still_running=true
+        break
+      fi
+    done
+    if [[ "$still_running" == "false" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  for pattern in "${patterns[@]}"; do
+    pkill -TERM -f "$pattern" 2>/dev/null || true
+  done
+  sleep 2
+
+  for pattern in "${patterns[@]}"; do
+    pkill -KILL -f "$pattern" 2>/dev/null || true
+  done
+  sleep 2
+}
+
+handle_interrupt() {
+  log "Interrupted. Cleaning ROS/Gazebo/RViz processes before exiting."
+  cleanup_orphans
+  exit 130
+}
+trap handle_interrupt INT TERM
+
+run_has_bag_data() {
+  local run_dir="$1"
+  [[ -f "$run_dir/RUN_COMPLETE" && -f "$run_dir/bag/metadata.yaml" ]] && compgen -G "$run_dir/bag/*.db3" >/dev/null
+}
+
+resolve_params_yaml() {
+  local method="$1"
+  local candidate
+  local -a candidates=()
+
+  case "$method" in
+    baseline)
+      candidates=(
+        "${BASELINE_PARAMS_FILE:-}"
+        "$PARAMS_BASE_DIR/copy_params_planner.yaml"
+        "$PARAMS_BASE_DIR/copy_planner_params.yaml"
+      )
+      ;;
+    bo_optimized)
+      candidates=(
+        "${BO_PARAMS_FILE:-}"
+        "${GP_PARAMS_FILE:-}"
+        "$PARAMS_BASE_DIR/params_plenner.yaml"
+        "$PARAMS_BASE_DIR/params_planner.yaml"
+        "$PARAMS_BASE_DIR/planner_params.yaml"
+      )
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -n "$candidate" && -f "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+waypoints_for_world() {
+  local world="$1"
+  case "$world" in
+    werehouse)
+      cat <<'WPS'
+-13.0,0.0,3.14;-4.0,0.0,0.0;3.5,0.0,0.0;13.0,0.0,0.0
+-13.0,8.0,1.57;-4.0,8.0,0.0;4.0,8.0,0.0;13.0,8.0,0.0
+13.0,-8.0,-1.57;4.0,-8.0,3.14;-4.0,-8.0,3.14;-13.0,-8.0,3.14
+WPS
+      ;;
+    indoor_office)
+      cat <<'WPS'
+8.0,0.0,0.0;8.0,-5.5,-1.57;-6.5,-5.5,3.14;-8.0,0.0,1.57
+-8.0,3.0,1.57;-1.0,3.0,0.0;1.5,5.5,1.57;8.0,5.5,0.0
+7.5,-3.0,-1.57;3.0,-3.0,3.14;0.0,0.0,3.14;-7.5,3.0,1.57
+WPS
+      ;;
+    open_world)
+      cat <<'WPS'
+2.0,0.0,0.0;4.0,-2.0,-0.7;7.0,-2.0,0.0;7.0,2.0,1.57;4.0,4.5,2.4;0.0,6.0,3.14
+-2.0,0.0,3.14;-5.5,2.0,2.6;-6.5,5.5,1.57;0.0,7.0,0.0;6.5,5.5,0.0;8.0,0.0,-1.57;6.0,-4.0,-2.2;-2.0,-6.5,3.14
+0.0,2.0,1.57;2.0,5.5,0.8;-2.0,6.5,2.4;-6.5,2.0,3.14;-6.5,-5.0,-1.57;2.0,-7.0,0.0;7.0,-4.0,0.8
+WPS
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+run_single_task() {
+  local world="$1"
+  local method="$2"
+  local task_idx="$3"
+  local waypoints="$4"
+
+  local world_file="${WORLD_FILE[$world]}"
+  if [[ "$world_file" != /* ]]; then
+    world_file="$WORLD_BASE_DIR/$world_file"
+  fi
+  local params_yaml
+  if ! params_yaml="$(resolve_params_yaml "$method")"; then
+    params_yaml=""
+  fi
+  local method_dir="${WORLD_DIR_PREFIX[$world]}_${METHOD_DIR_SUFFIX[$method]}"
+  local run_dir="$METRICS_BASE_DIR/$method_dir/T${task_idx}"
+  local bag_dir="$run_dir/bag"
+
+  if [[ ! -f "$world_file" ]]; then
+    log "ERROR: world file not found: $world_file"
+    return 1
+  fi
+  if [[ -z "$params_yaml" || ! -f "$params_yaml" ]]; then
+    log "ERROR: params file not found for method: $method"
+    return 1
+  fi
+
+  if [[ -d "$run_dir" && "$FORCE_OVERWRITE" != "true" ]] && run_has_bag_data "$run_dir"; then
+    log "SKIP existing run: $run_dir (set FORCE_OVERWRITE=true to replace)"
+    return 0
+  fi
+
+  cleanup_orphans
+
+  if [[ -d "$run_dir" ]]; then
+    if [[ "$FORCE_OVERWRITE" == "true" ]]; then
+      log "Removing existing run because FORCE_OVERWRITE=true: $run_dir"
+    else
+      log "Removing incomplete run without a valid bag: $run_dir"
+    fi
+    rm -rf "$run_dir"
+  fi
+
+  mkdir -p "$run_dir"
+
+  local launch_log="$run_dir/launch.log"
+  local bag_log="$run_dir/bag_record.log"
+  local mission_log="$run_dir/mission_commander.log"
+
+  log "Run => world=$world method=$method task=T${task_idx}"
+  log "Launch => ros2 launch $LAUNCH_PACKAGE $LAUNCH_FILE"
+  log "Params => $params_yaml"
+  log "Output => $run_dir"
+
+  setsid ros2 launch "$LAUNCH_PACKAGE" "$LAUNCH_FILE" \
+    "gui:=${GUI}" \
+    "use_rviz:=${USE_RVIZ}" \
+    "planner_params:=${params_yaml}" \
+    "wait_for_goal:=true" \
+    "planner_delay_sec:=${PLANNER_DELAY_SEC}" \
+    "world:=${world_file}" \
+    "world_init_x:=${WORLD_INIT_X[$world]}" \
+    "world_init_y:=${WORLD_INIT_Y[$world]}" \
+    "world_init_heading:=${WORLD_INIT_YAW[$world]}" \
+    >"$launch_log" 2>&1 &
+  local launch_pid=$!
+
+  sleep "$STACK_STARTUP_SEC"
+  if ! kill -0 "$launch_pid" 2>/dev/null; then
+    log "ERROR: launch exited during startup. See $launch_log"
+    cleanup_orphans
+    return 1
+  fi
+
+  setsid ros2 bag record \
+    --output "$bag_dir" \
+    --storage sqlite3 \
+    "${BAG_TOPICS[@]}" \
+    >"$bag_log" 2>&1 &
+  local bag_pid=$!
+
+  set +e
+  python3 "$REPO_ROOT/tuning/mission_commander.py" \
+    "--waypoints=$waypoints" \
+    --goal-topic /goal_pose \
+    --pose-topic /go2/pose \
+    --goal-radius "$GOAL_REACHED_RADIUS" \
+    --goal-timeout-sec "$GOAL_WAIT_TIMEOUT_SEC" \
+    --startup-delay-sec "$MISSION_STARTUP_DELAY_SEC" \
+    --post-goal-settle-sec "$POST_GOAL_SETTLE_SEC" \
+    --republish-sec "$GOAL_REPUBLISH_SEC" \
+    --status-log-sec "$MISSION_STATUS_LOG_SEC" \
+    >"$mission_log" 2>&1
+  local mission_rc=$?
+  set -e
+
+  sleep "$POST_RUN_RECORD_SEC"
+
+  stop_pid "$bag_pid"
+  stop_pid "$launch_pid"
+
+  cleanup_orphans
+
+  if [[ "$mission_rc" -ne 0 ]]; then
+    log "WARNING: mission commander failed for $run_dir (rc=$mission_rc)."
+  else
+    date +'%F %T' >"$run_dir/RUN_COMPLETE"
+    log "Completed: $run_dir"
+  fi
+
+  return 0
+}
+
+main() {
+  log "Starting metrics recording campaign (A*+MPC baseline vs bo_optimized)."
+  cleanup_orphans
+
+  for world in "${WORLDS[@]}"; do
+    local_task_idx=0
+    while IFS= read -r wp_line; do
+      [[ -z "$wp_line" ]] && continue
+      local_task_idx=$((local_task_idx + 1))
+      for method in "${METHODS[@]}"; do
+        run_single_task "$world" "$method" "$local_task_idx" "$wp_line"
+      done
+    done < <(waypoints_for_world "$world")
+  done
+
+  if [[ "$RUN_EXTRACTION" == "true" ]]; then
+    log "Running metrics extraction (including MPC solving time)..."
+    python3 "$REPO_ROOT/tuning/extract_metrics_from_bags.py" --repo-root "$REPO_ROOT"
+  fi
+
+  log "All recordings completed."
+}
+
+main "$@"
