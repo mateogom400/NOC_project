@@ -4,7 +4,7 @@
 
 **Affiliations:** Talos Robotics AI, Milan, Italy
 
-[![Paper](https://img.shields.io/badge/Paper-PDF-b31b1b.svg)](documentation/conference_101719.pdf) [![ROS 2](https://img.shields.io/badge/ROS_2-Humble-22314E?logo=ros)](https://docs.ros.org/en/humble/) [![Gazebo](https://img.shields.io/badge/Gazebo-Fortress-orange)](https://gazebosim.org/) [![Robot](https://img.shields.io/badge/Robot-Unitree_Go2-yellow)](https://www.unitree.com/go2/) [![License](https://img.shields.io/badge/License-GPL-3.0-green.svg)](LICENSE)
+[![Paper](https://img.shields.io/badge/Paper-PDF-b31b1b.svg)](documentation/conference_101719.pdf) [![ROS 2](https://img.shields.io/badge/ROS_2-Humble-22314E?logo=ros)](https://docs.ros.org/en/humble/) [![Gazebo](https://img.shields.io/badge/Gazebo-Fortress-orange)](https://gazebosim.org/) [![Robot](https://img.shields.io/badge/Robot-Unitree_Go2-yellow)](https://www.unitree.com/go2/) [![License](https://img.shields.io/badge/License-Apache_2.0-green.svg)](LICENSE)
 
 ---
 
