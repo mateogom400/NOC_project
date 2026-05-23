@@ -1,0 +1,172 @@
+# =============================================================================
+# planner_params_bo_tuned.yaml — Bayesian-Optimization tuned (Phase 1 of paper)
+# Loaded by go2_real_planner/launch/planner.launch.py when use_bo_params:=true
+#
+# Source: tuning/bayesian_mpc_tuner.py — 120 trials (20 random + 100 TPE) over
+# the E1 (Open) + E2 (Indoor Office) training scenarios.
+# Drop in a fresh best_planner_params.yaml here to deploy newer tuning runs.
+# =============================================================================
+/**:
+  ros__parameters:
+    # ─────────────────────────────────────────────────────────────
+    # Goal handling
+    # ─────────────────────────────────────────────────────────────
+    wait_for_goal: true            # require runtime goal from RViz (/goal_pose)
+    goal_x: 5.0                    # used only when wait_for_goal=false
+    goal_y: 5.0
+    goal_z: 0.0
+
+    # ─────────────────────────────────────────────────────────────
+    # A* local map/planning settings
+    # ─────────────────────────────────────────────────────────────
+    grid_reso: 0.25                # local grid cell size [m]
+    grid_half_width: 10.0           # local map is 10 m x 10 m
+    grid_std: 0.15              # Gaussian spread [m] — 1-sigma inflation radius = 0.30 m
+    obstacle_threshold: 0.4       # = 1-Φ(1σ): blocks every cell within 1σ of any obstacle
+    obstacle_cost_weight: 35.0      # normalized-quadratic weight — prefers wide paths without blocking doorways
+    replan_rate_hz: 1.0            # lower refresh reduces path flicker while staying reactive
+    goal_reached_radius: 0.30      # stop replanning near goal
+    duplicate_goal_xy_tolerance: 0.05  # ignore repeated /global_goal messages within this XY distance [m]
+    duplicate_goal_z_tolerance: 0.05   # ignore repeated /global_goal messages within this Z distance [m]
+    planning_height: 0.0
+
+    # ─────────────────────────────────────────────────────────────
+    # MPC horizon parameters
+    # ─────────────────────────────────────────────────────────────
+    mpc_N: 50                    # prediction horizon steps
+    mpc_dt: 0.1                 # time step [s] — 50×0.1=5s horizon
+
+    # ─────────────────────────────────────────────────────────────
+    # Actuator lag model (fixes #3 holonomic mismatch + #4 lag)
+    # ─────────────────────────────────────────────────────────────
+    # First-order response time constants [s] for Go2 velocity tracking.
+    # Measured empirically: τ≈0.10-0.15 s for body-frame velocities.
+    mpc_tau_v: 0.12              # forward/lateral velocity lag [s]
+    mpc_tau_w: 0.10              # angular velocity lag [s]
+
+    # ─────────────────────────────────────────────────────────────
+    # Velocity constraints (2D kinematic model)
+    # ─────────────────────────────────────────────────────────────
+    mpc_vx_max: 1.0                # max forward velocity [m/s]
+    mpc_vy_max: 0.5                # max lateral velocity [m/s]
+    mpc_omega_max: 1.5             # max angular velocity [rad/s]
+    mpc_v_ref: 0.5                 # desired cruise speed [m/s] (not used)
+
+    # ─────────────────────────────────────────────────────────────
+    # Tracking cost weights
+    # ─────────────────────────────────────────────────────────────
+    mpc_Q_x: 81.406819              # x-axis (forward) position tracking weight
+    mpc_Q_y: 76.793851              # y-axis (lateral) position tracking weight — tuned separately
+    mpc_Q_yaw: 0.159859             # yaw tracking weight (low — A* segments are jagged)
+    mpc_Q_terminal: 184.780052      # terminal state weight multiplier
+
+    # ─────────────────────────────────────────────────────────────
+    # Control effort weights
+    # ─────────────────────────────────────────────────────────────
+    mpc_R_vx: 9.948168              # forward velocity command effort
+    mpc_R_vy: 8.106174              # lateral velocity command effort — tuned separately
+    mpc_R_omega: 9.809461           # angular velocity control effort
+    mpc_R_jerk: 2.684864            # stronger penalty on control-rate change for smoother motion
+
+    # ─────────────────────────────────────────────────────────────
+    # Obstacle avoidance (logistic sigmoid barrier)
+    # ─────────────────────────────────────────────────────────────
+    mpc_W_obs_sigmoid: 4.830974     # A* already routes around obstacles; sigmoid is a close-range safety net only, before: 200
+    mpc_obs_alpha: 13.438599        # lower steepness => better conditioning
+    mpc_obs_r: 0.098285             # safety radius [m]
+    mpc_max_obs_constraints: 12    # fewer constraints improves robustness
+    mpc_obs_check_radius: 3.0      # range to search for obstacles [m]
+
+    # ─────────────────────────────────────────────────────────────
+    # IPOPT solver settings
+    # ─────────────────────────────────────────────────────────────
+    mpc_max_iter: 100              # max IPOPT iterations
+    mpc_warm_start: true           # use warm start from previous solution
+
+    # ─────────────────────────────────────────────────────────────
+    # MPC node settings
+    # ─────────────────────────────────────────────────────────────
+    mpc_rate_hz: 10.0              # MPC solve frequency [Hz]
+    mpc_lookahead_dist: 1.2        # shorter lookahead reduces aggressive corner cutting
+    max_lidar_range: 6.0           # max lidar range [m]
+    mpc_path_resample_ds: 0.15     # denser path resampling before MPC [m]
+    mpc_path_smooth_window: 7      # kept for reference; CubicSpline is used instead (#5)
+    mpc_setpoint_alpha: 0.20       # stronger low-pass on published MPC setpoint
+    mpc_setpoint_max_step: 0.20    # max setpoint jump per MPC cycle [m]
+    mpc_setpoint_reset_dist: 1.25  # reset filter only for large path topology jumps [m]
+
+    # ─────────────────────────────────────────────────────────────
+    # Velocity estimation from pose differentiation (#3/#4)
+    # ─────────────────────────────────────────────────────────────
+    vel_filter_alpha: 0.30        # EMA coefficient for body-frame velocity estimate
+                                  # lower = smoother but laggier; 0.3 is a good default
+
+    # ─────────────────────────────────────────────────────────────
+    # LiDAR staleness guard (#6)
+    # ─────────────────────────────────────────────────────────────
+    lidar_max_age_sec: 0.60       # discard LiDAR data older than this [s]
+                                  # 0.60 = 6 LiDAR periods @ 10 Hz — tolerates EKF jitter without
+                                  # disabling obstacle avoidance on every other solve cycle
+
+    # ─────────────────────────────────────────────────────────────
+    # Dynamic obstacle prediction (#10)
+    # ─────────────────────────────────────────────────────────────
+    obs_predict_frac: 0.50        # predict obstacles at this fraction of the MPC horizon
+                                  # 0.5 → predict at t + N*dt/2 (horizon midpoint)
+
+    # ─────────────────────────────────────────────────────────────
+    # Adaptive velocity limits (#9)
+    # ─────────────────────────────────────────────────────────────
+    adaptive_vel_limits: true     # reduce vx_max when IPOPT failure rate exceeds 30%;
+                                  # recover automatically when failure rate drops below 5%
+
+    # ─────────────────────────────────────────────────────────────
+    # MPC security protocol (escape from inflated obstacle space)
+    # ─────────────────────────────────────────────────────────────
+    # If the robot's occupancy probability reaches this threshold the
+    # security protocol activates.  Should be <= obstacle_threshold (0.45)
+    # so it triggers before the A* hard-obstacle cutoff.
+    mpc_security_threshold: 0.25   # triggers at d≈0.20 m from obstacle (inside A* hard boundary)
+    # BFS search radius [m]: how far to look for a free cell to escape to.
+    mpc_security_escape_radius: 3.0
+
+    # ─────────────────────────────────────────────────────────────
+    # Persistent obstacle map (local minima avoidance)
+    # ─────────────────────────────────────────────────────────────
+    # LiDAR hits are accumulated in a sparse world-frame map and
+    # merged into the Gaussian grid every planning cycle, so walls
+    # that left sensor range remain visible to A*.
+    # Set map_decay_sec: 0.0 to keep all obstacles forever (static env).
+    map_decay_sec:  20.0   # seconds before an unconfirmed cell expires
+    map_max_cells:  5000  # memory cap — oldest cells dropped when exceeded
+
+    # ─────────────────────────────────────────────────────────────
+    # Navigation graph (topological global memory)
+    # ─────────────────────────────────────────────────────────────
+    # Nodes are added every nav_graph_node_spacing metres of travel
+    # (only in free space).  Edges connect nodes within edge_radius
+    # that have a clear line of sight through the current LiDAR grid.
+    # When the final goal is outside the local A* grid the graph
+    # publishes an intermediate waypoint so A* navigates toward a
+    # globally-informed target rather than the raw ray-to-boundary.
+    nav_graph_node_spacing:   1.5   # min distance between graph nodes [m]
+    nav_graph_edge_radius:    4.0   # max distance to attempt a new edge [m]
+    nav_graph_waypoint_reach: 1.0   # distance at which a waypoint is considered reached [m]
+    nav_graph_obs_threshold:  0.45  # occupancy probability treated as obstacle
+
+    # ─────────────────────────────────────────────────────────────
+    # Setpoint -> cmd_vel controller settings
+    # ─────────────────────────────────────────────────────────────
+    cmd_rate_hz: 20.0              # /cmd_vel publish frequency
+    cmd_kp_xy: 1.2                 # body-frame XY proportional gain
+    cmd_kp_yaw: 0.8                # yaw proportional gain
+    cmd_max_vx: 0.8                # forward speed clamp [m/s]
+    cmd_max_vy: 0.30               # lateral speed clamp [m/s]
+    cmd_max_omega: 0.8             # yaw-rate clamp [rad/s]
+    cmd_stop_radius: 0.2           # stop when setpoint distance <= this [m]
+    setpoint_timeout_sec: 2.0      # tolerate EKF hiccups before zeroing cmd_vel
+    enable_yaw_control: true       # rotate to align with path direction
+    cmd_smoothing_alpha: 0.35      # low-pass on cmd_vel stream
+    cmd_max_ax: 1.0                # max x acceleration for cmd smoothing [m/s^2]
+    cmd_max_ay: 0.8                # max y acceleration for cmd smoothing [m/s^2]
+    cmd_max_alpha: 1.5             # max yaw acceleration for cmd smoothing [rad/s^2]

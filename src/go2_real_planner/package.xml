@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>go2_real_planner</name>
+  <version>0.1.0</version>
+  <description>
+    Real-robot launch wrapper around a_star_mpc_planner.
+
+    Spawns the four planner nodes (odom_to_pose, a_star, mpc, setpoint_to_cmd_vel,
+    nav_graph) and selects between a bundled hand-tuned baseline and a bundled
+    BO-tuned parameter set, or accepts an arbitrary YAML at launch time
+    (e.g. fresh output from tuning/bayesian_mpc_tuner.py).
+  </description>
+  <maintainer email="lorenzo.ortolani@talosrobotics.ai">Lorenzo Ortolani</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>a_star_mpc_planner</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

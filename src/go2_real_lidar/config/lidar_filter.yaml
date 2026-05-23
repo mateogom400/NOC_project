@@ -1,0 +1,29 @@
+# lidar_filter.yaml
+# Parameters for go2_real_lidar/lidar_filter_node.
+# Tweak r_max / voxel_size to balance MPC obstacle coverage against CPU load.
+
+go2_real_lidar_filter:
+  ros__parameters:
+    # ── Topics & frames ──────────────────────────────────────────────────
+    raw_topic:      "/utlidar/cloud"
+    filtered_topic: "/lidar/points_filtered"
+    source_frame:   "utlidar_lidar"
+    target_frame:   "odom"
+
+    # ── Filtering ────────────────────────────────────────────────────────
+    # Range gate (Euclidean distance from the sensor, before transform)
+    r_min: 0.20    # drop points inside the robot body
+    r_max: 6.00    # match a_star_mpc_planner.max_lidar_range
+
+    # Height gate (in target frame after transform)
+    z_min: -0.20   # drop ground returns slightly below the lidar plane
+    z_max:  1.50   # ignore ceiling / high obstacles
+
+    # Voxel downsample size [m]; set to 0 to disable
+    voxel_size: 0.05
+
+    # Hard cap on republish rate (Hz)
+    publish_rate_hz: 10.0
+
+    # Max time to wait for TF (source → target)
+    tf_lookup_timeout: 0.05

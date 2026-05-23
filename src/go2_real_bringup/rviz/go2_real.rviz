@@ -1,0 +1,88 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Reference Frame: odom
+      Plane Cell Count: 20
+      Cell Size: 1.0
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Description Topic: /robot_description
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Names: true
+      Tree:
+        odom:
+          base_footprint:
+            base_link:
+              utlidar_lidar: {}
+    - Class: rviz_default_plugins/PointCloud2
+      Name: LiDAR (filtered)
+      Enabled: true
+      Topic:
+        Value: /lidar/points_filtered
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: Intensity
+    - Class: rviz_default_plugins/Map
+      Name: A* Occupancy Grid
+      Enabled: true
+      Topic:
+        Value: /a_star/occupancy_grid
+      Color Scheme: costmap
+    - Class: rviz_default_plugins/Path
+      Name: A* Path
+      Enabled: true
+      Topic:
+        Value: /a_star/path
+      Color: 0; 200; 255
+      Line Width: 0.05
+    - Class: rviz_default_plugins/Path
+      Name: MPC Predicted Path
+      Enabled: true
+      Topic:
+        Value: /mpc/predicted_path
+      Color: 255; 100; 0
+      Line Width: 0.04
+    - Class: rviz_default_plugins/Pose
+      Name: MPC Setpoint
+      Enabled: true
+      Topic:
+        Value: /mpc/next_setpoint
+      Color: 255; 0; 200
+      Shape: Arrow
+    - Class: rviz_default_plugins/Pose
+      Name: Global Goal
+      Enabled: true
+      Topic:
+        Value: /global_goal
+      Color: 0; 255; 0
+      Shape: Arrow
+  Global Options:
+    Fixed Frame: odom
+    Background Color: 30; 30; 30
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Value: /goal_pose
+    - Class: rviz_default_plugins/Measure
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 15
+      Focal Point: { X: 0, Y: 0, Z: 0 }
+      Yaw: 1.57
+      Pitch: 0.7

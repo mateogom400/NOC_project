@@ -1,0 +1,22 @@
+# bringup.yaml
+# Top-level toggles for the real-Go2 A*+MPC navigation stack.
+# Per-node parameters live in their own packages (go2_bringup, go2_real_planner, ...).
+
+go2_real_bringup:
+  ros__parameters:
+    # ── Hardware ──────────────────────────────────────────────────────────
+    # Topic published by the Go2 internal ROS 2 bridge (sport-mode state, ~50 Hz)
+    sport_state_topic: "/sportmodestate"
+    # Topic published by the Go2 internal ROS 2 bridge for the built-in L1 LiDAR
+    raw_lidar_topic:   "/utlidar/cloud"
+
+    # ── Frames ────────────────────────────────────────────────────────────
+    odom_frame: "odom"
+    base_frame: "base_footprint"
+    lidar_frame: "utlidar_lidar"
+
+    # ── Pipeline topics (do not change unless you know what you're doing) ─
+    filtered_lidar_topic: "/lidar/points_filtered"
+    pose_topic:           "/go2/pose"
+    global_goal_topic:    "/global_goal"
+    cmd_vel_topic:        "/cmd_vel"

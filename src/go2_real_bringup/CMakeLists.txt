@@ -1,0 +1,18 @@
+cmake_minimum_required(VERSION 3.8)
+project(go2_real_bringup)
+
+find_package(ament_cmake REQUIRED)
+
+install(DIRECTORY
+  launch
+  config
+  rviz
+  DESTINATION share/${PROJECT_NAME}
+  FILES_MATCHING
+    PATTERN "*.launch.py"
+    PATTERN "*.yaml"
+    PATTERN "*.xml"
+    PATTERN "*.rviz"
+)
+
+ament_package()

@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>go2_real_bringup</name>
+  <version>0.1.0</version>
+  <description>
+    Top-level bringup for the A*+MPC navigation stack on the real Unitree Go2,
+    using the Go2 built-in Sport-mode controller (no CHAMP).
+
+    Orchestrates:
+      - go2_bringup/go2_hw_bridge   : SportModeState -> odom/TF, /cmd_vel -> Sport API
+      - go2_real_lidar              : /utlidar/cloud -> /lidar/points_filtered
+      - go2_real_planner            : A* + MPC + setpoint -> /cmd_vel  (default or BO-tuned)
+      - go2_real_goal_manager       : RViz /goal_pose relay + waypoint mission runner
+      - robot_safety (optional)     : velocity limiter / safety gate
+      - rviz2 (optional)
+  </description>
+  <maintainer email="lorenzo.ortolani@talosrobotics.ai">Lorenzo Ortolani</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>go2_bringup</exec_depend>
+  <exec_depend>go2_description</exec_depend>
+  <exec_depend>go2_real_lidar</exec_depend>
+  <exec_depend>go2_real_planner</exec_depend>
+  <exec_depend>go2_real_goal_manager</exec_depend>
+  <exec_depend>a_star_mpc_planner</exec_depend>
+  <exec_depend>robot_safety</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  CycloneDDS profile for talking to the Unitree Go2.
+
+  The Go2's onboard ROS 2 bridge (unitree_ros2) uses CycloneDDS and discovers
+  peers on the network interface bridged to the robot's internal 192.168.123.x
+  network. This profile pins discovery to a single interface so DDS does not
+  spray multicast across every NIC on the Jetson / host PC.
+
+  Usage:
+    export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+    export CYCLONEDDS_URI=file://$(ros2 pkg prefix go2_real_bringup)/share/go2_real_bringup/config/cyclonedds_profile.xml
+
+  Replace the `name="eth0"` below with the actual interface on YOUR host that
+  is connected to the Go2 (check with `ip addr` — look for the 192.168.123.x
+  subnet). On the Jetson Orin Nano with the bundled USB-C adapter this is
+  typically `enxXXXX` or `eth0`.
+-->
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+  <Domain Id="any">
+    <General>
+      <Interfaces>
+        <!-- ►► Change name="eth0" to the interface that reaches the Go2. ◄◄ -->
+        <NetworkInterface name="eth0" priority="default" multicast="default" />
+      </Interfaces>
+      <AllowMulticast>spdp</AllowMulticast>
+      <MaxMessageSize>65500B</MaxMessageSize>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>
+    </Discovery>
+    <Internal>
+      <MinimumSocketReceiveBufferSize>10MB</MinimumSocketReceiveBufferSize>
+    </Internal>
+  </Domain>
+</CycloneDDS>
