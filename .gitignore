@@ -19,3 +19,6 @@ __pycache__/Boot from the GParted Live USB you made with balenaEtcher
 # Tuning artifacts
 tuning_results/**/rosbag/
 *.db3
+
+# Large source videos kept locally only (GIF preview is committed instead)
+assets/*.mp4

@@ -14,22 +14,42 @@ Real-time autonomous navigation in dynamic, unknown environments remains a funda
 
 The framework is robot-agnostic and is evaluated on the **Unitree Go2** quadruped in Gazebo simulation and on the physical robot. The full system achieves up to a **90.0% navigation success rate** when deployed, along with a **38.9% average improvement** in evaluation metrics across simulated environments.
 
+> **Extension — sim-to-sim benchmark on the Unitree G1 humanoid.** To stress the
+> *robot-agnostic* claim beyond a single embodiment and a single simulator, the
+> same A\*+MPC + BO stack has been ported to the **Unitree G1** bipedal humanoid
+> and is now benchmarked **sim-to-sim**: Go2 in **Gazebo Fortress** against G1 in
+> **NVIDIA Isaac Sim**. Introducing the G1 agent (rather than evaluating on the
+> Go2 alone) tests whether the planner and the BO-tuned controller transfer
+> across both a different morphology *and* a different physics/sensor stack.
+> Companion repository: **[G1_navigation](https://github.com/Relo02/G1_navigation)**.
+
 ---
 
 ## Video Demo (Simulation)
 
-A short video demonstrates the full pipeline running in Gazebo Fortress across the three benchmark environments (E1 Open, E2 Indoor Office, E3 Warehouse), including the BO-tuned vs. hand-tuned baseline comparison shown in Fig. 4 of the paper.
+A short video demonstrates the full pipeline running in Gazebo Fortress across the worst case benchmark environment E2 Indoor Office, including the BO-tuned vs. hand-tuned baseline comparison shown in Fig. 4 of the paper.
 
-[![Watch the demo](https://img.shields.io/badge/Watch_demo-▶_YouTube-red?logo=youtube)](https://youtu.be/REPLACE_WITH_VIDEO_ID) &nbsp; [![Trajectory plots (PDF)](https://img.shields.io/badge/Trajectory_plots-PDF-b31b1b.svg)](tuning/trajectory_comparison_frame_113.pdf)
+![Rolling-horizon A* + MPC local planning demo](assets/rolling_horizon_demo.gif)
 
-What you'll see in the clip:
+*Inline preview accelerated to ≈3× so it renders directly in the README everywhere.*
 
-- **A\* path** (cyan) replanning on the Gaussian occupancy grid as the robot moves
-- **MPC predicted trajectory** (orange) tracking the A\* reference with smooth, dynamically feasible velocities
-- **Topological navigation graph** growing as previously-visited regions are added as nodes
-- Side-by-side **baseline vs. BO-tuned** runs showing the 38.7% path-length reduction and 53% time-to-goal improvement reported in the paper
+What you'll see in the clip is the full herarchical baseline stack in action: the LiDAR-based Gaussian occupancy grid, the A\* planner generating a collision-free path, and the MPC tracking it while reacting to dynamic obstacles. The BO-tuned parameters yield smoother trajectories with better obstacle clearance compared to the hand-tuned baseline.
 
-> Hosting: the video file is not committed to the repo. Replace the YouTube placeholder above with the actual link once published. A local fallback can be added under `documentation/assets/` and embedded via plain `<video>` HTML if preferred.
+### Baseline vs. BO-tuned trajectories
+
+<p align="center">
+  <img src="assets/trajectory_comparison.png" alt="Baseline MPC (blue) vs. BO-tuned MPC (red) trajectories tracking the A* reference path around LiDAR obstacles" width="60%">
+</p>
+
+A single control frame (Fig. 4 in the paper): tracking the same A\* reference (grey dashed) around the LiDAR obstacles (orange), the **hand-tuned baseline MPC** (blue) overshoots into a wide, clearance-eroding arc, while the **BO-tuned MPC** (red) stays tight to the reference — yielding the 38.7% path-length reduction and 53% time-to-goal improvement reported in the paper.
+
+### Baseline vs. BO-tuned aggregate metrics
+
+Across the **E1 Open World** and **E2 Indoor Office** benchmarks, the BO-tuned controller (orange) improves navigation success while shortening both the path and the time to goal relative to the hand-tuned baseline (blue):
+
+![Baseline vs. BO-tuned mean path length and time-to-goal per environment](documentation/assets/bag_metrics_time_path.png)
+
+**Mean path length** and **time-to-goal** both shrink markedly in the Indoor Office — the hardest benchmark — confirming the tighter, more efficient trajectories seen in the per-frame plot above.
 
 ---
 
@@ -303,7 +323,7 @@ Three primary extensions are planned for upcoming releases:
 
 1. **Online Bayesian Optimization** — warm-started from the offline tuned vector, an online GP-based BO loop will adapt MPC parameters incrementally during deployment, enabling environment-specific refinement for out-of-distribution settings without offline retraining.
 2. **Scan-Conditioned MPC Tuning (DGCNN)** — a self-supervised Dynamic Graph CNN encoder will provide scan-level, annotation-free MPC parameter conditioning from raw LiDAR embeddings.
-3. **Port to the Unitree G1 + VLA Integration** — the stack will be ported to the Unitree G1 bipedal humanoid and interfaced with Visual Language Action models for natural-language goal decomposition, with lifelong continual online learning from real-world data.
+3. **Unitree G1 + VLA Integration** — *in progress.* The stack has been ported to the **Unitree G1** bipedal humanoid in the companion [G1_navigation](https://github.com/Relo02/G1_navigation) repo, where it runs in **NVIDIA Isaac Sim** for an ongoing **sim-to-sim benchmark** (Go2/Gazebo ↔ G1/Isaac) of the same A\*+MPC + Bayesian-Optimization pipeline. Next steps: interface with Visual Language Action models for natural-language goal decomposition, with lifelong continual online learning from real-world data.
 
 ---
 
