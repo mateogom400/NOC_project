@@ -31,8 +31,6 @@ A short video demonstrates the full pipeline running in Gazebo Fortress across t
 
 ![Rolling-horizon A* + MPC local planning demo](assets/rolling_horizon_demo.gif)
 
-*Inline preview accelerated to ≈3× so it renders directly in the README everywhere.*
-
 What you'll see in the clip is the full herarchical baseline stack in action: the LiDAR-based Gaussian occupancy grid, the A\* planner generating a collision-free path, and the MPC tracking it while reacting to dynamic obstacles. The BO-tuned parameters yield smoother trajectories with better obstacle clearance compared to the hand-tuned baseline.
 
 ### Baseline vs. BO-tuned trajectories
