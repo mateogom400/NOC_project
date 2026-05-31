@@ -31,9 +31,7 @@ A short video demonstrates the full pipeline running in Gazebo Fortress across t
 
 ![Rolling-horizon A* + MPC local planning demo](assets/rolling_horizon_demo.gif)
 
-*Inline preview accelerated to ≈3× so it renders directly in the README everywhere.*
-
-What you'll see in the clip is the full herarchical baseline stack in action: the LiDAR-based Gaussian occupancy grid, the A\* planner generating a collision-free path, and the MPC tracking it while reacting to dynamic obstacles. The BO-tuned parameters yield smoother trajectories with better obstacle clearance compared to the hand-tuned baseline.
+The clip shows the LiDAR-based Gaussian occupancy grid, the A\* planner producing a collision-free path, and the MPC tracking that path while avoiding obstacles.
 
 ### Baseline vs. BO-tuned trajectories
 
@@ -41,15 +39,15 @@ What you'll see in the clip is the full herarchical baseline stack in action: th
   <img src="assets/trajectory_comparison.png" alt="Baseline MPC (blue) vs. BO-tuned MPC (red) trajectories tracking the A* reference path around LiDAR obstacles" width="60%">
 </p>
 
-A single control frame (Fig. 4 in the paper): tracking the same A\* reference (grey dashed) around the LiDAR obstacles (orange), the **hand-tuned baseline MPC** (blue) overshoots into a wide, clearance-eroding arc, while the **BO-tuned MPC** (red) stays tight to the reference — yielding the 38.7% path-length reduction and 53% time-to-goal improvement reported in the paper.
+A single control frame (Fig. 4 in the paper). Both controllers track the same A\* reference (grey dashed) past the LiDAR points (orange): the baseline MPC (blue) follows a wider arc, while the BO-tuned MPC (red) stays closer to the reference. The paper reports a 38.7% path-length reduction and a 53% time-to-goal improvement.
 
 ### Baseline vs. BO-tuned aggregate metrics
 
-Across the **E1 Open World** and **E2 Indoor Office** benchmarks, the BO-tuned controller (orange) improves navigation success while shortening both the path and the time to goal relative to the hand-tuned baseline (blue):
+Aggregate metrics over the **E1 Open World** and **E2 Indoor Office** benchmarks. Baseline is blue, BO-tuned is orange.
 
 ![Baseline vs. BO-tuned mean path length and time-to-goal per environment](documentation/assets/bag_metrics_time_path.png)
 
-**Mean path length** and **time-to-goal** both shrink markedly in the Indoor Office — the hardest benchmark — confirming the tighter, more efficient trajectories seen in the per-frame plot above.
+In the Indoor Office environment, mean path length and time-to-goal are both lower for the BO-tuned controller.
 
 ---
 
