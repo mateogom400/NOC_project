@@ -62,9 +62,9 @@ Go2_navigation/
 │   ├── robot_safety/         # E-stop, watchdog, /cmd_vel safety gate
 │   ├── go2_bringup/          # Unitree Sport-API hardware bridge (cmd_vel → /api/sport/request)
 │   ├── go2_real_bringup/     # ★ Real-robot top-level launch (A*+MPC over Unitree built-in ctrl)
-│   ├── go2_real_lidar/       # ★ /utlidar/cloud → /lidar/points_filtered adapter
+│   ├── g1_real_lidar/       # ★ /utlidar/cloud → /lidar/points_filtered adapter
 │   ├── go2_real_planner/     # ★ A*+MPC launch wrapper with BO-YAML selector
-│   ├── go2_real_goal_manager/# ★ RViz /goal_pose relay + waypoint mission runner
+│   ├── g1_real_goal_manager/# ★ RViz /goal_pose relay + waypoint mission runner
 │   ├── go2_description/      # URDF / Xacro for the Unitree Go2
 │   ├── go2_sim/              # Go2-specific Gazebo plugins and meshes
 │   ├── champ/                # CHAMP hierarchical locomotion controller
@@ -215,7 +215,7 @@ Run a reproducible waypoint mission for benchmarking:
 
 ```bash
 ros2 launch go2_real_bringup go2_real_full.launch.py \
-  mission_file:=$(ros2 pkg prefix go2_real_goal_manager)/share/go2_real_goal_manager/config/example_mission.yaml
+  mission_file:=$(ros2 pkg prefix g1_real_goal_manager)/share/g1_real_goal_manager/config/example_mission.yaml
 ```
 
 **DDS:** the entire pipeline talks to the Go2 via **CycloneDDS** pinned to the network interface bridged to the robot's internal `192.168.123.0/24` network. See [src/go2_real_bringup/README.md](src/go2_real_bringup/README.md) for the required `RMW_IMPLEMENTATION` + `CYCLONEDDS_URI` setup and the bundled `cyclonedds_profile.xml`.
@@ -303,9 +303,9 @@ ros2 topic echo /mpc/diagnostics
 | [`robot_safety/`](src/robot_safety/) | E-stop, `/cmd_vel` watchdog, and setpoint-timeout safety gate |
 | [`go2_bringup/`](src/go2_bringup/) | Unitree Sport-API hardware bridge: `cmd_vel` ↔ `/api/sport/request`, `SportModeState` → `odom` + TF |
 | [`go2_real_bringup/`](src/go2_real_bringup/) | **Real-robot deployment**: orchestrates A\*+MPC over the Unitree built-in controller (no CHAMP). Includes CycloneDDS profile and RViz config |
-| [`go2_real_lidar/`](src/go2_real_lidar/) | Adapter for the built-in Unitree L1 LiDAR: `/utlidar/cloud` → `/lidar/points_filtered` (range + height filter, voxel downsample, TF to `odom`) |
+| [`g1_real_lidar/`](src/g1_real_lidar/) | Adapter for the built-in Unitree L1 LiDAR: `/utlidar/cloud` → `/lidar/points_filtered` (range + height filter, voxel downsample, TF to `odom`) |
 | [`go2_real_planner/`](src/go2_real_planner/) | Real-robot launch wrapper around `a_star_mpc_planner`, with a BO-YAML selector (bundled default + bundled BO-tuned + arbitrary override) |
-| [`go2_real_goal_manager/`](src/go2_real_goal_manager/) | RViz `/goal_pose` → `/global_goal` relay + waypoint-mission runner (YAML-driven benchmarks) |
+| [`g1_real_goal_manager/`](src/g1_real_goal_manager/) | RViz `/goal_pose` → `/global_goal` relay + waypoint-mission runner (YAML-driven benchmarks) |
 | [`go2_description/`](src/go2_description/) | URDF / Xacro and meshes of the Unitree Go2 |
 | [`champ/`](src/champ/), [`champ_base/`](src/champ_base/) | CHAMP hierarchical locomotion controller — used **only in simulation**; real-robot deployment uses the Go2's built-in controller via `go2_bringup` |
 | [`sim_worlds/`](src/sim_worlds/) | Gazebo worlds for E1 (Open), E2 (Indoor Office), and E3 (Warehouse, held-out) |

@@ -4,7 +4,7 @@ MPC tracker ROS2 node for the Go2 quadruped robot.
 Architecture
 ------------
   Subscribes:
-    /go2/pose              PoseStamped  — robot pose (position + orientation)
+    <pose_topic>              PoseStamped  — robot pose (position + orientation)
     /lidar/points_filtered PointCloud2  — 3-D lidar hits (world frame)
     /a_star/path           nav_msgs/Path — local A* path
 
@@ -91,6 +91,9 @@ class MPCNode(Node):
         self.declare_parameter('mpc_obs_r',               0.5)
         self.declare_parameter('mpc_max_obs_constraints', 15)
         self.declare_parameter('mpc_obs_check_radius',    2.0)
+        # Schema di integrazione del canale di posizione (dispense §2.1.3):
+        # 'euler' (eq. 2.9, ordine 1) oppure 'midpoint' (eq. 2.10, ordine 2).
+        self.declare_parameter('mpc_integrator', 'euler')
         self.declare_parameter('mpc_max_iter',   100)
         self.declare_parameter('mpc_warm_start',  True)
         self.declare_parameter('mpc_rate_hz',       2.0)
@@ -125,6 +128,7 @@ class MPCNode(Node):
         cfg = MPCConfig(
             N             = int(self.get_parameter('mpc_N').value),
             dt            = float(self.get_parameter('mpc_dt').value),
+            integrator    = str(self.get_parameter('mpc_integrator').value),
             tau_v         = float(self.get_parameter('mpc_tau_v').value),
             tau_w         = float(self.get_parameter('mpc_tau_w').value),
             vx_max        = float(self.get_parameter('mpc_vx_max').value),
@@ -218,7 +222,14 @@ class MPCNode(Node):
         )
 
         # ── Subscribers ───────────────────────────────────────────────
-        self.create_subscription(PoseStamped, '/go2/pose',               self._pose_cb,  10)
+        # Nome del topic della posa: parametrico perche' cambia con la
+        # piattaforma (/go2/pose sul Go2, /robot_pose sul G1). E' l'unico
+        # punto in cui il robot entra in questo nodo.
+        self.declare_parameter('pose_topic', '/robot_pose')
+        _pose_topic = self.get_parameter('pose_topic').value
+        self._pose_topic = _pose_topic
+
+        self.create_subscription(PoseStamped, _pose_topic,               self._pose_cb,  10)
         self.create_subscription(PointCloud2, '/lidar/points_filtered',  self._lidar_cb, sensor_qos)
         self.create_subscription(Path,        '/a_star/path',            self._path_cb,  10)
 
@@ -281,7 +292,7 @@ class MPCNode(Node):
         self._yaw  = yaw_new
 
         self.get_logger().info(
-            f'[MPC-DEBUG] /go2/pose received: '
+            f'[MPC-DEBUG] {self._pose_topic} received: '
             f'pos=({x_new:.4f}, {y_new:.4f})  '
             f'yaw={math.degrees(yaw_new):.1f} deg  '
             f'vel_body=({self._vx_est:.2f}, {self._vy_est:.2f}, {self._wz_est:.2f})',
@@ -665,9 +676,21 @@ class MPCNode(Node):
                 nxt_xy  = result.x_pred[lookahead_idx, :2]
                 nxt_yaw = float(result.x_pred[lookahead_idx, 2])
             else:
+                # Fallback: l'orizzonte non arriva a eff_lookahead. Si punta
+                # l'ultimo waypoint di A*.
+                #
+                # Lo yaw NON puo' essere quello corrente del robot: il
+                # controllore a valle insegue l'orientamento del setpoint, e
+                # "mantieni l'orientamento che hai" significa omega = 0. Se il
+                # fallback e' frequente il robot non ruota MAI: avanza dritto
+                # finche' il goal non gli finisce di fianco, e li' si pianta,
+                # perche' lo spostamento laterale gli e' precluso (vy_max ~ 0).
+                # Il riferimento corretto e' la direzione VERSO il waypoint.
                 last_wp = self._a_star_path[-1]
                 nxt_xy  = np.array([float(last_wp[0]), float(last_wp[1])])
-                nxt_yaw = self._yaw
+                _d      = nxt_xy - robot_pos
+                nxt_yaw = (float(math.atan2(_d[1], _d[0]))
+                           if float(np.linalg.norm(_d)) > 1e-6 else self._yaw)
 
             # Setpoint low-pass filter
             nxt_xy = np.asarray(nxt_xy, dtype=float)
@@ -727,6 +750,16 @@ class MPCNode(Node):
             float(self._fail_count),
             float(1 if result.security_mode else 0),
             float(self._adaptive_vx_max),   # [6] current adaptive vx limit
+            # [7..12] stato iniziale x0 dell'NLP, cioe' ESATTAMENTE cio' che e'
+            # stato passato al solutore. Serve a poter ri-risolvere lo stesso
+            # problema offline da una bag (viz/): posizione e yaw si potrebbero
+            # dedurre da /mpc/predicted_path[0], ma le velocita' sono stimate
+            # qui dentro (EMA sulle differenze di posa) e senza queste non
+            # uscirebbero mai. Vedi guides/visualizzazione_ottimizzazione.md.
+            float(state[0]), float(state[1]), float(state[2]),
+            float(state[3]), float(state[4]), float(state[5]),
+            # [13] iterazioni di IPOPT dell'ultimo solve (-1 se non disponibili)
+            float(result.iterations if hasattr(result, 'iterations') else -1),
         ]
         self._diagnostics_pub.publish(diag)
 
@@ -741,7 +774,8 @@ def main(args=None):
     finally:
         node.destroy_node()
         try:
-            rclpy.shutdown()
+            if rclpy.ok():
+                rclpy.shutdown()
         except Exception:
             pass
 

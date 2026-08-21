@@ -92,10 +92,38 @@ class MPCConfig:
     max_obs_constraints: int   = 15
     obs_check_radius:    float = 3.0
 
+    # Trattamento degli ostacoli (dispense §6.3.3, Thm 6.3.1)
+    #   'penalty' : nessun vincolo, solo il termine sigmoid+hinge^2 nel costo.
+    #               E' la formulazione storica: gli ostacoli non hanno
+    #               moltiplicatori e l'active set resta banale.
+    #   'l1'      : vincolo vero  ||p_k - o_j|| >= d_safe - s_jk,  s_jk >= 0,
+    #               con  + rho * sum(s)  nel costo. La penalita' l1 e' ESATTA:
+    #               per rho > max|mu*| lo slack va esattamente a zero.
+    #   'l2'      : stesso vincolo ma  + rho * sum(s^2). NON esatta: lascia un
+    #               residuo s* ~ mu*/(2 rho) per ogni rho finito.
+    # Il confronto l1/l2 al variare di rho e' la verifica sperimentale del
+    # Thm 6.3.1; vedi viz/exact_penalty.py.
+    obstacle_mode: str = 'penalty'
+    obs_d_safe:    float = 0.40   # distanza di sicurezza del vincolo [m]
+    obs_rho:       float = 5.0e3  # peso della penalita' sullo slack
+
+    # Schema di integrazione del canale di posizione (dispense §2.1.3)
+    #   'euler'    : eq. (2.9),  yaw valutato a inizio intervallo, errore globale O(dt)
+    #   'midpoint' : eq. (2.10), yaw valutato a meta' intervallo,  errore globale O(dt^2)
+    # Il canale velocita' usa comunque la ZOH esatta del primo ordine: la scelta
+    # riguarda solo px/py, dove il termine R(yaw)*v va integrato numericamente.
+    integrator: str = 'euler'
+
     # IPOPT
     max_iter:   int  = 100
     warm_start: bool = True
     print_level: int = 0
+
+    # Diagnostica: registra il percorso degli iterati di IPOPT (x^0 -> x*) per
+    # la visualizzazione dello spazio delle decisioni (viz/decision_plane.py).
+    # Spento in esercizio: costa una copia del vettore delle variabili per
+    # iterazione e non serve al controllo.
+    record_iterates: bool = False
 
 
 # ============================================================
@@ -110,6 +138,10 @@ class MPCResult:
     cost:          float
     solve_time_ms: float
     security_mode: bool = False
+    # Iterazioni dell'interior-point spese in questo ciclo: e' la grandezza che
+    # dice quanto e' condizionato il problema, e oggi non veniva ne' letta ne'
+    # esposta pur essendo gratis in sol.stats(). Vedi roadmap §3.5.
+    iterations:    int = -1
 
     @property
     def next_position(self) -> np.ndarray:
@@ -160,6 +192,7 @@ class MPCTracker:
         self._opti:   Optional[ca.Opti] = None
         self._X:      Optional[ca.MX]   = None
         self._U:      Optional[ca.MX]   = None
+        self._S:      Optional[ca.MX]   = None   # slack ostacoli (solo modi l1/l2)
         self._p_x0:   Optional[ca.MX]   = None
         self._p_xref: Optional[ca.MX]   = None
         self._p_obs:  Optional[ca.MX]   = None
@@ -181,6 +214,9 @@ class MPCTracker:
         # Health tracking (#1 & #2)
         self._consecutive_failures: int = 0
         self._cost_history: list = []
+
+        # Percorso degli iterati dell'ultimo solve (solo se cfg.record_iterates)
+        self.iterates: list = []
 
     # ------------------------------------------------------------------
     # Grid map (API compat — not used in NLP)
@@ -277,6 +313,21 @@ class MPCTracker:
         p_vy_max    = opti.parameter()
         p_omega_max = opti.parameter()
 
+        # Slack sul vincolo di ostacolo (§6.3.3). Uno per coppia (passo, ostacolo).
+        # Nella modalita' 'penalty' non esiste: l'NLP resta identico a prima.
+        hard_obs = cfg.obstacle_mode in ('l1', 'l2')
+        # Una colonna per PASSO VINCOLATO, cioe' k = 1..N: sono N, non N+1.
+        # A k=0 lo stato e' fissato da X[:,0] == x0 e il vincolo non dipende da
+        # variabili decisionali; una colonna di slack la' sarebbe libera e, con
+        # il costo lineare della l1, renderebbe l'NLP illimitato inferiormente.
+        S = opti.variable(n_obs, N) if hard_obs else None
+        # I vincoli di ostacolo sono i PRIMI aggiunti (stanno dentro il ciclo che
+        # costruisce il costo), in coppie [dist >= d_safe - S, S >= 0] per ogni
+        # (passo, ostacolo). Registrare la fetta permette di leggere i mu del
+        # solo vincolo di distanza, senza confonderli con quelli dello slack.
+        # k = 0 escluso (stato fissato): i passi vincolati sono 1..N, cioe' N.
+        self._n_obs_con = 2 * n_obs * N if hard_obs else 0
+
         # Weight matrices — only position/yaw tracked, velocity states free
         q   = np.array([cfg.Q_x, cfg.Q_y, cfg.Q_yaw, 0.0, 0.0, 0.0])
         Q   = np.diag(q)
@@ -306,10 +357,22 @@ class MPCTracker:
                     (X[0, k] - p_obs[0, j]) ** 2 +
                     (X[1, k] - p_obs[1, j]) ** 2 + 1e-6
                 )
-                s_k         = cfg.obs_alpha * (dist_k - cfg.obs_r)
-                cost       += cfg.W_obs_sigmoid * 0.5 * (1.0 - ca.tanh(0.5 * s_k))
-                penetration  = ca.fmax(0.0, cfg.obs_r - dist_k)
-                cost        += cfg.W_obs_sigmoid * 2.0 * penetration ** 2
+                if hard_obs:
+                    # Vincolo vero rilassato con slack, piu' la penalita' sullo
+                    # slack: e' la forma su cui vale il Thm 6.3.1.
+                    # Si parte da k=1: a k=0 lo stato e' FISSATO dalla condizione
+                    # iniziale X[:,0] == x0, quindi il vincolo non dipende da
+                    # nessuna variabile decisionale. Imporlo la' rende l'NLP
+                    # inammissibile ogni volta che il robot si trova gia' entro
+                    # d_safe da un ostacolo — cioe' proprio quando servirebbe.
+                    if k >= 1:
+                        opti.subject_to(dist_k >= cfg.obs_d_safe - S[j, k - 1])
+                        opti.subject_to(S[j, k - 1] >= 0.0)
+                else:
+                    s_k         = cfg.obs_alpha * (dist_k - cfg.obs_r)
+                    cost       += cfg.W_obs_sigmoid * 0.5 * (1.0 - ca.tanh(0.5 * s_k))
+                    penetration  = ca.fmax(0.0, cfg.obs_r - dist_k)
+                    cost        += cfg.W_obs_sigmoid * 2.0 * penetration ** 2
 
         # Terminal cost
         e_T   = X[:, N] - p_xref[:, N]
@@ -320,10 +383,22 @@ class MPCTracker:
                 (X[0, N] - p_obs[0, j]) ** 2 +
                 (X[1, N] - p_obs[1, j]) ** 2 + 1e-6
             )
-            s_T          = cfg.obs_alpha * (dist_T - cfg.obs_r)
-            cost        += cfg.W_obs_sigmoid * 0.5 * (1.0 - ca.tanh(0.5 * s_T))
-            penetration_T = ca.fmax(0.0, cfg.obs_r - dist_T)
-            cost         += cfg.W_obs_sigmoid * 2.0 * penetration_T ** 2
+            if hard_obs:
+                opti.subject_to(dist_T >= cfg.obs_d_safe - S[j, N - 1])
+                opti.subject_to(S[j, N - 1] >= 0.0)
+            else:
+                s_T          = cfg.obs_alpha * (dist_T - cfg.obs_r)
+                cost        += cfg.W_obs_sigmoid * 0.5 * (1.0 - ca.tanh(0.5 * s_T))
+                penetration_T = ca.fmax(0.0, cfg.obs_r - dist_T)
+                cost         += cfg.W_obs_sigmoid * 2.0 * penetration_T ** 2
+
+        if hard_obs:
+            # l1: lineare, esatta (Thm 6.3.1).  l2: quadratica, lascia residuo.
+            # S >= 0 e' gia' imposto, quindi sum(S) = ||S||_1.
+            if cfg.obstacle_mode == 'l1':
+                cost += cfg.obs_rho * ca.sum1(ca.sum2(S))
+            else:
+                cost += cfg.obs_rho * ca.sumsqr(S)
 
         opti.minimize(cost)
 
@@ -338,9 +413,22 @@ class MPCTracker:
             vy_next  = (1.0 - lag_w) * vy_k  + lag_w  * vy_cmd
             wz_next  = (1.0 - lag_w) * wz_k  + lag_w  * wz_cmd
 
-            # Position update with post-lag velocity (more accurate than commanded)
-            cos_yaw  = ca.cos(yaw_k)
-            sin_yaw  = ca.sin(yaw_k)
+            # Position update with post-lag velocity (more accurate than commanded).
+            # L'orientamento a cui si valuta R(yaw) decide l'ordine dello schema:
+            # a inizio intervallo e' Euler in avanti (eq. 2.9), a meta' intervallo
+            # e' la regola del punto medio (eq. 2.10). Il costo aggiuntivo e' una
+            # somma: wz_next serve comunque per yaw_next.
+            if cfg.integrator == 'midpoint':
+                yaw_eval = yaw_k + 0.5 * wz_next * dt
+            elif cfg.integrator == 'euler':
+                yaw_eval = yaw_k
+            else:
+                raise ValueError(
+                    f"integrator sconosciuto: {cfg.integrator!r} "
+                    "(attesi 'euler' o 'midpoint')"
+                )
+            cos_yaw  = ca.cos(yaw_eval)
+            sin_yaw  = ca.sin(yaw_eval)
             px_next  = px_k  + (vx_next * cos_yaw - vy_next * sin_yaw) * dt
             py_next  = py_k  + (vx_next * sin_yaw + vy_next * cos_yaw) * dt
             yaw_next = yaw_k + wz_next * dt
@@ -371,9 +459,21 @@ class MPCTracker:
         }
         opti.solver('ipopt', p_opts, s_opts)
 
+        if cfg.record_iterates:
+            # Opti.callback viene invocata a ogni iterazione di IPOPT; dentro,
+            # opti.debug.value(opti.x) restituisce l'iterato corrente.
+            def _on_iter(_i, _opti=opti):
+                try:
+                    self.iterates.append(np.array(_opti.debug.value(_opti.x),
+                                                  dtype=float).ravel())
+                except Exception:
+                    pass
+            opti.callback(_on_iter)
+
         self._opti      = opti
         self._X         = X
         self._U         = U
+        self._S         = S
         self._p_x0      = p_x0
         self._p_xref    = p_xref
         self._p_obs     = p_obs
@@ -469,6 +569,8 @@ class MPCTracker:
         """
         t0       = time.perf_counter()
         cfg      = self.cfg
+        if cfg.record_iterates:
+            self.iterates = []
         N        = cfg.N
         NX, NU   = self.NX, self.NU
 
@@ -513,9 +615,14 @@ class MPCTracker:
         opti.set_value(self._p_obs,     obs_pts.T)  # (2, n_obs)
 
         # Adaptive velocity limits (fix #9)
-        opti.set_value(self._p_vx_max,    max(self._vx_max_eff,    0.05))
-        opti.set_value(self._p_vy_max,    max(self._vy_max_eff,    0.05))
-        opti.set_value(self._p_omega_max, max(self._omega_max_eff, 0.05))
+        # Il minimo evita che la riduzione adattiva porti il box a larghezza
+        # nulla, rendendo l'NLP degenere. Era 0.05, cioe' PIU' ALTO di limiti
+        # legittimi come vy_max=0.02 del profilo G1: il vincolo dichiarato
+        # veniva silenziosamente allargato di 2.5x.
+        _FLOOR = 1e-3
+        opti.set_value(self._p_vx_max,    max(self._vx_max_eff,    _FLOOR))
+        opti.set_value(self._p_vy_max,    max(self._vy_max_eff,    _FLOOR))
+        opti.set_value(self._p_omega_max, max(self._omega_max_eff, _FLOOR))
 
         # ── Warm start ───────────────────────────────────────────────
         if cfg.warm_start and self._prev_u is not None and self._prev_x is not None:
@@ -531,6 +638,16 @@ class MPCTracker:
 
         # ── Zero-velocity fallback after too many consecutive failures (#1) ──
         if self._consecutive_failures >= self._MAX_CONSEC_FAILURES:
+            # Il fallback DEVE essere transitorio: si salta un ciclo (comando
+            # nullo) per rompere una cascata da warm start corrotto, poi si
+            # riprova da capo a freddo. Azzerare qui il contatore e' essenziale:
+            # l'unico altro reset e' dopo opti.solve(), che questo return non
+            # raggiunge mai. Senza, al terzo fallimento il fallback si
+            # auto-alimenta e l'MPC non risolve piu' per il resto della
+            # missione (misurato: 609/876 cicli, 100% dopo il primo aggancio).
+            self._consecutive_failures = 0
+            self._prev_u = None
+            self._prev_x = None
             return MPCResult(
                 success=False,
                 x_pred=x_ref.copy(),
@@ -595,10 +712,16 @@ class MPCTracker:
             u_seq  = np.zeros((N, NU))
             x_pred = x_ref.copy()
 
+        try:
+            n_iter = int(sol.stats().get('iter_count', -1))
+        except Exception:
+            n_iter = -1
+
         return MPCResult(
             success=success,
             x_pred=x_pred,
             u_opt=u_seq,
             cost=cost_val,
             solve_time_ms=(time.perf_counter() - t0) * 1e3,
+            iterations=n_iter,
         )

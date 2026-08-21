@@ -8,9 +8,9 @@ Pipeline
 --------
   /utlidar/cloud        (Unitree L1)
         │
-        ▼   go2_real_lidar.lidar_filter_node
+        ▼   g1_real_lidar.lidar_filter_node
   /lidar/points_filtered
-        │                                  ┌── /global_goal ── go2_real_goal_manager
+        │                                  ┌── /global_goal ── g1_real_goal_manager
         ▼                                  ▼
   a_star_mpc_planner  (a_star_node + mpc_node + setpoint_to_cmd_vel_node + nav_graph_node)
         │
@@ -55,9 +55,9 @@ def generate_launch_description():
     bringup_share         = get_package_share_directory("go2_real_bringup")
     go2_bringup_share     = get_package_share_directory("go2_bringup")
     go2_description_share = get_package_share_directory("go2_description")
-    lidar_share           = get_package_share_directory("go2_real_lidar")
+    lidar_share           = get_package_share_directory("g1_real_lidar")
     planner_share         = get_package_share_directory("go2_real_planner")
-    goal_share            = get_package_share_directory("go2_real_goal_manager")
+    goal_share            = get_package_share_directory("g1_real_goal_manager")
     safety_share          = get_package_share_directory("robot_safety")
 
     go2_params  = os.path.join(go2_bringup_share,     "config", "go2_params.yaml")

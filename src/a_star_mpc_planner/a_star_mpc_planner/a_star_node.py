@@ -4,7 +4,7 @@ A* planner ROS2 node for the Go2 quadruped robot.
 Architecture
 ------------
   Subscribes:
-    /go2/pose       PoseStamped  — robot position and orientation
+    <pose_topic>       PoseStamped  — robot position and orientation
     /lidar/points_filtered   PointCloud2  — 2-D/3-D lidar hits (world frame)
     /global_goal    PoseStamped  — runtime global goal override
 
@@ -110,7 +110,22 @@ class AStarNode(Node):
         )
 
         # ── Subscribers ───────────────────────────────────────────────
-        self.create_subscription(PoseStamped, '/go2/pose',             self._pose_cb,         10)
+        # Nome del topic della posa: parametrico perche' cambia con la
+        # piattaforma (/go2/pose sul Go2, /robot_pose sul G1). E' l'unico
+        # punto in cui il robot entra in questo nodo.
+        self.declare_parameter('pose_topic', '/robot_pose')
+        _pose_topic = self.get_parameter('pose_topic').value
+
+        # Frame in cui vengono pubblicati path, griglia e goal locale. Era
+        # cablato a 'map', che esiste solo se a monte gira una SLAM: in questo
+        # stack non c'e' mappa a priori e il frame di pianificazione e' 'odom'.
+        # Con il frame sbagliato i messaggi vengono pubblicati regolarmente ma
+        # RViz non li puo' trasformare, quindi non si vede NULLA e nessuno
+        # segnala un errore.
+        self.declare_parameter('planning_frame', 'odom')
+        self._frame = self.get_parameter('planning_frame').value
+
+        self.create_subscription(PoseStamped, _pose_topic,             self._pose_cb,         10)
         self.create_subscription(PoseStamped, '/global_goal',          self._goal_cb,         10)
         self.create_subscription(PointCloud2, '/lidar/points_filtered',self._lidar_cb,        sensor_qos)
 
@@ -274,11 +289,11 @@ class AStarNode(Node):
             # Publish path
             path_msg = Path()
             path_msg.header.stamp = stamp
-            path_msg.header.frame_id = 'map'
+            path_msg.header.frame_id = self._frame
             for wx, wy in path:
                 pose = PoseStamped()
                 pose.header.stamp = stamp
-                pose.header.frame_id = 'map'
+                pose.header.frame_id = self._frame
                 pose.pose.position.x = float(wx)
                 pose.pose.position.y = float(wy)
                 pose.pose.position.z = self._goal[2]
@@ -289,7 +304,7 @@ class AStarNode(Node):
             # Publish local goal (last waypoint)
             local_goal_msg = PoseStamped()
             local_goal_msg.header.stamp = stamp
-            local_goal_msg.header.frame_id = 'map'
+            local_goal_msg.header.frame_id = self._frame
             local_goal_msg.pose.position.x = float(path[-1][0])
             local_goal_msg.pose.position.y = float(path[-1][1])
             local_goal_msg.pose.position.z = self._goal[2]
@@ -310,7 +325,7 @@ class AStarNode(Node):
         if self._grid_map.gmap is not None:
             ogm = OccupancyGrid()
             ogm.header.stamp = stamp
-            ogm.header.frame_id = 'map'
+            ogm.header.frame_id = self._frame
             ogm.info.resolution = self._grid_map.reso
             ogm.info.width = self._grid_map.cells
             ogm.info.height = self._grid_map.cells
@@ -333,7 +348,7 @@ class AStarNode(Node):
             -1e9, -1e9, 1e9, 1e9  # unbounded — publish everything stored
         )
         if all_cells is not None:
-            hdr = Header(stamp=stamp, frame_id='map')
+            hdr = Header(stamp=stamp, frame_id=self._frame)
             pc = point_cloud2.create_cloud_xyz32(hdr, all_cells[:, :3].tolist())
             self._pmap_pub.publish(pc)
 
@@ -348,7 +363,8 @@ def main(args=None):
     finally:
         node.destroy_node()
         try:
-            rclpy.shutdown()
+            if rclpy.ok():
+                rclpy.shutdown()
         except Exception:
             pass
 

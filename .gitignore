@@ -5,7 +5,7 @@
 /bags_recordings/
 
 # Python caches
-__pycache__/Boot from the GParted Live USB you made with balenaEtcher
+__pycache__/
 *.py[cod]
 
 # Tooling caches
@@ -22,3 +22,7 @@ tuning_results/**/rosbag/
 
 # Large source videos kept locally only (GIF preview is committed instead)
 assets/*.mp4
+
+# Figure generate dagli strumenti di visualizzazione
+viz/out/
+viz/bags/

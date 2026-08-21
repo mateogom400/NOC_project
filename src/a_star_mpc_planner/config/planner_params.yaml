@@ -1,5 +1,10 @@
 /**:
   ros__parameters:
+    # Topic della posa: parametrico dalla versione G1 in poi.
+    # Il Go2 pubblica su /go2/pose, il G1 su /robot_pose.
+    pose_topic: /go2/pose
+    planning_frame: map            # Go2: la posa viene da slam_toolbox/EKF
+
     # ─────────────────────────────────────────────────────────────
     # Goal handling
     # ─────────────────────────────────────────────────────────────

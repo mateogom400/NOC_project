@@ -12,7 +12,7 @@ No vision or semantic scoring is used — traversability is determined purely
 from the LiDAR occupancy grid published by the A* node.
 
 Subscribes:
-  /go2/pose          PoseStamped        — robot position
+  <pose_topic>          PoseStamped        — robot position
   /global_goal       PoseStamped        — final navigation goal
   /a_star/grid_raw   Float32MultiArray  — rolling occupancy grid for edge validation
 
@@ -85,7 +85,13 @@ class NavGraphNode(Node):
         )
 
         # ── Subscribers ───────────────────────────────────────────────
-        self.create_subscription(PoseStamped,       '/go2/pose',        self._pose_cb, 10)
+        # Nome del topic della posa: parametrico perche' cambia con la
+        # piattaforma (/go2/pose sul Go2, /robot_pose sul G1). E' l'unico
+        # punto in cui il robot entra in questo nodo.
+        self.declare_parameter('pose_topic', '/robot_pose')
+        _pose_topic = self.get_parameter('pose_topic').value
+
+        self.create_subscription(PoseStamped,       _pose_topic,        self._pose_cb, 10)
         self.create_subscription(PoseStamped,       '/global_goal',     self._goal_cb, 10)
         self.create_subscription(Float32MultiArray, '/a_star/grid_raw', self._grid_cb, sensor_qos)
 
@@ -392,7 +398,8 @@ def main(args=None):
     finally:
         node.destroy_node()
         try:
-            rclpy.shutdown()
+            if rclpy.ok():
+                rclpy.shutdown()
         except Exception:
             pass
 

@@ -4,7 +4,7 @@ setpoint_to_cmd_vel_node.py
 Converts MPC lookahead setpoints into body-frame /cmd_vel commands for CHAMP/Gazebo.
 
 Subscribes:
-  /go2/pose          geometry_msgs/PoseStamped
+  <pose_topic>          geometry_msgs/PoseStamped
   /mpc/next_setpoint geometry_msgs/PoseStamped
 
 Publishes:
@@ -86,7 +86,13 @@ class SetpointToCmdVelNode(Node):
         self._last_cmd = Twist()
         self._has_last_cmd = False
 
-        self.create_subscription(PoseStamped, '/go2/pose', self._pose_cb, 10)
+        # Nome del topic della posa: parametrico perche' cambia con la
+        # piattaforma (/go2/pose sul Go2, /robot_pose sul G1). E' l'unico
+        # punto in cui il robot entra in questo nodo.
+        self.declare_parameter('pose_topic', '/robot_pose')
+        _pose_topic = self.get_parameter('pose_topic').value
+
+        self.create_subscription(PoseStamped, _pose_topic, self._pose_cb, 10)
         self.create_subscription(PoseStamped, '/mpc/next_setpoint', self._setpoint_cb, 10)
 
         self._cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
@@ -94,7 +100,7 @@ class SetpointToCmdVelNode(Node):
         self.create_timer(1.0 / self._rate_hz, self._control_cb)
 
         self.get_logger().info(
-            'setpoint_to_cmd_vel ready: /mpc/next_setpoint + /go2/pose -> /cmd_vel'
+            f'setpoint_to_cmd_vel ready: /mpc/next_setpoint + {_pose_topic} -> /cmd_vel'
         )
 
     def _pose_cb(self, msg: PoseStamped):
@@ -205,7 +211,8 @@ def main(args=None):
     finally:
         node.destroy_node()
         try:
-            rclpy.shutdown()
+            if rclpy.ok():
+                rclpy.shutdown()
         except Exception:
             pass
 

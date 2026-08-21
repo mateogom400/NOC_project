@@ -1,8 +1,8 @@
 """
 odom_to_pose_node.py
-Republishes nav_msgs/Odometry from /odom as geometry_msgs/PoseStamped on /go2/pose.
+Republishes nav_msgs/Odometry from /odom as geometry_msgs/PoseStamped on <pose_topic>.
 
-This bridge is needed because the A* and MPC nodes subscribe to /go2/pose
+This bridge is needed because the A* and MPC nodes subscribe to <pose_topic>
 (PoseStamped) but the CHAMP/EKF stack only publishes /odom (Odometry).
 """
 
@@ -25,11 +25,13 @@ class OdomToPoseNode(Node):
             depth=1,
         )
 
-        self._pub = self.create_publisher(PoseStamped, '/go2/pose', 10)
+        self.declare_parameter('pose_topic', '/robot_pose')
+        _pose_topic = self.get_parameter('pose_topic').value
+        self._pub = self.create_publisher(PoseStamped, _pose_topic, 10)
         self.create_subscription(Odometry, '/odom/raw', self._odom_cb, sensor_qos)
         self._msg_count = 0
 
-        self.get_logger().info('odom_to_pose_node ready: /odom/raw → /go2/pose')
+        self.get_logger().info(f'odom_to_pose_node ready: /odom/raw -> {_pose_topic}')
         self.get_logger().warn('[ODOM_BRIDGE] Waiting for first /odom/raw message...')
 
     def _odom_cb(self, msg: Odometry):
@@ -70,7 +72,8 @@ def main(args=None):
     finally:
         node.destroy_node()
         try:
-            rclpy.shutdown()
+            if rclpy.ok():
+                rclpy.shutdown()
         except Exception:
             pass
 

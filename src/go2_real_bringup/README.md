@@ -11,14 +11,14 @@ This is a thin orchestration layer on top of:
 | Package | Role |
 |---|---|
 | [`go2_real_bringup`](../go2_real_bringup/) | Top-level launch — wires everything together |
-| [`go2_real_lidar`](../go2_real_lidar/) | `/utlidar/cloud` → `/lidar/points_filtered` adapter |
+| [`g1_real_lidar`](../g1_real_lidar/) | `/utlidar/cloud` → `/lidar/points_filtered` adapter |
 | [`go2_real_planner`](../go2_real_planner/) | Wraps `a_star_mpc_planner` with BO-YAML selector |
-| [`go2_real_goal_manager`](../go2_real_goal_manager/) | RViz `/goal_pose` relay + waypoint mission runner |
+| [`g1_real_goal_manager`](../g1_real_goal_manager/) | RViz `/goal_pose` relay + waypoint mission runner |
 
 ## Pipeline
 
 ```
-  /utlidar/cloud  ──►  go2_real_lidar  ──►  /lidar/points_filtered
+  /utlidar/cloud  ──►  g1_real_lidar  ──►  /lidar/points_filtered
                                                     │
   RViz /goal_pose ──►  goal_relay   ──►  /global_goal
   (or)  mission.yaml ──►  mission_runner ─►  /global_goal
@@ -89,7 +89,7 @@ If nothing appears, the most common culprits are:
 ```bash
 cd ~/Go2_navigation
 colcon build --symlink-install --packages-select \
-  go2_real_bringup go2_real_lidar go2_real_planner go2_real_goal_manager
+  go2_real_bringup g1_real_lidar go2_real_planner g1_real_goal_manager
 source install/setup.bash
 ```
 
@@ -137,10 +137,10 @@ For reproducible benchmark trials, the mission runner sequences goals from a YAM
 
 ```bash
 ros2 launch go2_real_bringup go2_real_full.launch.py \
-  mission_file:=$(ros2 pkg prefix go2_real_goal_manager)/share/go2_real_goal_manager/config/example_mission.yaml
+  mission_file:=$(ros2 pkg prefix g1_real_goal_manager)/share/g1_real_goal_manager/config/example_mission.yaml
 ```
 
-Edit [`go2_real_goal_manager/config/example_mission.yaml`](../go2_real_goal_manager/config/example_mission.yaml) to define your own waypoints. Pass `repeat:=true` to loop forever.
+Edit [`g1_real_goal_manager/config/example_mission.yaml`](../g1_real_goal_manager/config/example_mission.yaml) to define your own waypoints. Pass `repeat:=true` to loop forever.
 
 ## Launch Arguments
 

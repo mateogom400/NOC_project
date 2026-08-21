@@ -24,9 +24,9 @@ from launch_ros.actions import Node
 def generate_launch_description():
 
     bringup_share = get_package_share_directory("go2_real_bringup")
-    lidar_share   = get_package_share_directory("go2_real_lidar")
+    lidar_share   = get_package_share_directory("g1_real_lidar")
     planner_share = get_package_share_directory("go2_real_planner")
-    goal_share    = get_package_share_directory("go2_real_goal_manager")
+    goal_share    = get_package_share_directory("g1_real_goal_manager")
     safety_share  = get_package_share_directory("robot_safety")
 
     rviz_config = os.path.join(bringup_share, "rviz", "go2_real.rviz")
