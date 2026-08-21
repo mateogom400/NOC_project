@@ -23,6 +23,12 @@ tuning_results/**/rosbag/
 # Large source videos kept locally only (GIF preview is committed instead)
 assets/*.mp4
 
-# Figure generate dagli strumenti di visualizzazione
-viz/out/
+# Figure generate dagli strumenti di visualizzazione.
+# Si esclude il CONTENUTO (viz/out/*) e non la cartella (viz/out/): con la
+# seconda forma git non ci entra nemmeno, e le negazioni qui sotto sarebbero
+# inefficaci. Le due figure del run di riferimento sono versionate apposta,
+# per avere un termine di paragone nel repo.
+viz/out/*
+!viz/out/pannello1_bag_industrial_plant_fix_planner_params_g1.png
+!viz/out/pannello2_industrial_plant_fix_merit.png
 viz/bags/
