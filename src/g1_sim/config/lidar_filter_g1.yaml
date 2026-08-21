@@ -1,5 +1,5 @@
 # Adattatore LiDAR per il G1 in MuJoCo.
-# Riusa g1_real_lidar/lidar_filter_node, che e' gia' completamente parametrico:
+# Riusa robot_real_lidar/lidar_filter_node, che e' gia' completamente parametrico:
 # nessuna riga di codice nuova, solo questi valori.
 #
 # La nuvola arriva nel frame del sensore (mid360_link) e va riportata nel frame

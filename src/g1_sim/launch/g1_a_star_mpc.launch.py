@@ -40,7 +40,7 @@ Argomenti
   nav_graph    : bool (default false)  memoria globale topologica (Dijkstra)
   goal_relay   : bool (default true)   /goal_pose -> /global_goal per RViz
   use_mission  : bool (default false)  esegue una missione a waypoint
-  mission_file : str  YAML della missione (vedi g1_real_goal_manager)
+  mission_file : str  YAML della missione (vedi robot_real_goal_manager)
 """
 
 import os
@@ -134,7 +134,7 @@ def generate_launch_description():
         # Riusa senza modifiche l'adattatore scritto per il LiDAR del Go2 reale:
         # e' gia' completamente parametrico (topic, frame, range, altezze, voxel).
         Node(
-            package="g1_real_lidar", executable="lidar_filter_node",
+            package="robot_real_lidar", executable="lidar_filter_node",
             name="g1_lidar_filter", output="screen",
             parameters=[lidar_params, sim_time],
         ),
@@ -173,7 +173,7 @@ def generate_launch_description():
         #    Go2 reale (parametrico, e forza il frame) invece di aggiungere una
         #    dipendenza da topic_tools ────────────────────────────────────
         Node(
-            package="g1_real_goal_manager", executable="goal_relay_node",
+            package="robot_real_goal_manager", executable="goal_relay_node",
             name="goal_relay_node", output="screen",
             parameters=[sim_time, {"input_topic": "/goal_pose",
                                    "output_topic": "/global_goal",
@@ -186,7 +186,7 @@ def generate_launch_description():
         # Serve agli esperimenti che richiedono scenari identici ripetuti:
         # vedi guides/roadmap_teorica_noc.md §6.6 (fronte di Pareto).
         Node(
-            package="g1_real_goal_manager", executable="mission_runner_node",
+            package="robot_real_goal_manager", executable="mission_runner_node",
             name="mission_runner_node", output="screen",
             parameters=[sim_time, {"mission_file": LaunchConfiguration("mission_file"),
                                    "global_goal_topic": "/global_goal",

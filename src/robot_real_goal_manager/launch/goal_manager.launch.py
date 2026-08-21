@@ -28,7 +28,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
 
-    share = get_package_share_directory("g1_real_goal_manager")
+    share = get_package_share_directory("robot_real_goal_manager")
 
     args = [
         DeclareLaunchArgument("use_sim_time", default_value="false"),
@@ -47,17 +47,17 @@ def generate_launch_description():
     mission_active = PythonExpression(["'", mission_file, "' != ''"])
 
     goal_relay = Node(
-        package="g1_real_goal_manager",
+        package="robot_real_goal_manager",
         executable="goal_relay_node",
-        name="g1_real_goal_relay",
+        name="robot_real_goal_relay",
         output="screen",
         parameters=[{"use_sim_time": use_sim_time}],
     )
 
     mission_runner = Node(
-        package="g1_real_goal_manager",
+        package="robot_real_goal_manager",
         executable="mission_runner_node",
-        name="g1_real_mission_runner",
+        name="robot_real_mission_runner",
         output="screen",
         parameters=[{
             "use_sim_time":     use_sim_time,

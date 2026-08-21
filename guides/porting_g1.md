@@ -62,28 +62,49 @@ Nessun'altra riga dell'algoritmo è stata toccata: `mpc_tracker.py`,
 
 | Serviva | Riusato |
 |---|---|
-| nuvola dal frame sensore al frame di pianificazione | [`g1_real_lidar/lidar_filter_node`](../src/g1_real_lidar/) — già parametrico su topic, frame, range, altezze, voxel: solo un YAML |
+| nuvola dal frame sensore al frame di pianificazione | [`robot_real_lidar/lidar_filter_node`](../src/robot_real_lidar/) — già parametrico su topic, frame, range, altezze, voxel: solo un YAML |
 | `/odom` → `PoseStamped` | `odom_to_pose_node` con un remap |
 | setpoint → `/cmd_vel` | `setpoint_to_cmd_vel_node`, solo nuovi clamp |
-| `/goal_pose` di RViz → `/global_goal` | [`g1_real_goal_manager/goal_relay_node`](../src/g1_real_goal_manager/) |
-| missioni a waypoint ripetibili | `g1_real_goal_manager/mission_runner_node` |
+| `/goal_pose` di RViz → `/global_goal` | [`robot_real_goal_manager/goal_relay_node`](../src/robot_real_goal_manager/) |
+| missioni a waypoint ripetibili | `robot_real_goal_manager/mission_runner_node` |
 
 ## 4-bis. Rinomina dei pacchetti del percorso di simulazione
 
-I due pacchetti che il G1 riusa sono stati rinominati con `git mv`, così tutto
-ciò che serve alla simulazione porta il prefisso `g1`:
+I due pacchetti che il G1 riusa sono stati rinominati con `git mv`, in **due
+passaggi** che vale la pena raccontare perché il primo era sbagliato:
 
-| prima | dopo |
-|---|---|
-| `go2_real_lidar` | [`g1_real_lidar`](../src/g1_real_lidar/) |
-| `go2_real_goal_manager` | [`g1_real_goal_manager`](../src/g1_real_goal_manager/) |
+| originale | primo rename | rename definitivo |
+|---|---|---|
+| `go2_real_lidar` | `g1_real_lidar` | [`robot_real_lidar`](../src/robot_real_lidar/) |
+| `go2_real_goal_manager` | `g1_real_goal_manager` | [`robot_real_goal_manager`](../src/robot_real_goal_manager/) |
 
-Rinominati anche: directory del package Python interno, marker in `resource/`,
-`<name>` in `package.xml`, `package_name` in `setup.py`, percorsi in `setup.cfg`,
-entry point, nomi dei nodi ROS (`g1_real_goal_relay`, `g1_real_mission_runner`)
-e ogni riferimento nel workspace — 20 file in tutto, zero riferimenti residui.
+Il prefisso `g1` sembrava naturale, ma era **una descrizione falsa**: questi due
+pacchetti non contengono una riga di codice specifica di un robot. Topic e frame
+sono tutti parametri, e ogni bringup li sovrascrive dal proprio YAML —
 
-Aggiornati anche i contenuti rimasti specifici del Go2 dentro `g1_real_lidar`,
+| | Go2 | G1 |
+|---|---|---|
+| `raw_topic` | `/utlidar/cloud` | `/livox/lidar` |
+| `source_frame` | `utlidar_lidar` | `mid360_link` |
+
+— quindi sono **adattatori generici**, condivisi fra i due robot. Etichettarli
+`g1` produceva l'assurdo di `go2_real_bringup` (bringup hardware del quadrupede)
+che dipendeva da `g1_real_lidar`. Il prefisso `robot_`, in linea con `robot_nav`
+e `robot_safety` già presenti, dice la verità e sistema entrambi i lati senza
+duplicare codice identico.
+
+Rinominati in entrambi i passaggi: directory del package Python interno, marker
+in `resource/`, `<name>` in `package.xml`, `package_name` in `setup.py`, percorsi
+in `setup.cfg`, entry point, nomi dei nodi ROS (`robot_real_lidar_filter`,
+`robot_real_goal_relay`, `robot_real_mission_runner`) e ogni riferimento nel
+workspace — zero riferimenti residui.
+
+Attenzione a un punto: il nome del nodo del filtro è anche la **chiave di primo
+livello** di `robot_real_lidar/config/lidar_filter.yaml`. Se le due cose divergono
+il nodo parte con i default e ignora il file, in silenzio. (`g1_sim` non ha questo
+problema perché il suo YAML usa il wildcard `/**`.)
+
+Aggiornati anche i contenuti rimasti specifici del Go2 dentro `robot_real_lidar`,
 perché il nome altrimenti mentirebbe: i default passano dal LiDAR L1 del Go2
 (`/utlidar/cloud`, frame `utlidar_lidar`) al Mid-360 del G1 (`/livox/lidar`,
 frame `mid360_link`), e le altezze di taglio diventano assolute dal pavimento
@@ -140,5 +161,5 @@ Con il G1 su MuJoCo non servono più: `champ`, `champ_base`, `champ_msgs`,
 `go2_bringup`, `go2_real_bringup`, `unitree_api`, `unitree_go`.
 
 Sono lasciati in piedi per ora: la rimozione è una decisione separata, e
-`g1_real_lidar` + `g1_real_goal_manager` restano **necessari** perché il G1 li
+`robot_real_lidar` + `robot_real_goal_manager` restano **necessari** perché il G1 li
 riusa.

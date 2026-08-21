@@ -9,9 +9,9 @@
 
     Orchestrates:
       - go2_bringup/go2_hw_bridge   : SportModeState -> odom/TF, /cmd_vel -> Sport API
-      - g1_real_lidar              : /utlidar/cloud -> /lidar/points_filtered
+      - robot_real_lidar              : /utlidar/cloud -> /lidar/points_filtered
       - go2_real_planner            : A* + MPC + setpoint -> /cmd_vel  (default or BO-tuned)
-      - g1_real_goal_manager       : RViz /goal_pose relay + waypoint mission runner
+      - robot_real_goal_manager       : RViz /goal_pose relay + waypoint mission runner
       - robot_safety (optional)     : velocity limiter / safety gate
       - rviz2 (optional)
   </description>
@@ -22,9 +22,9 @@
 
   <exec_depend>go2_bringup</exec_depend>
   <exec_depend>go2_description</exec_depend>
-  <exec_depend>g1_real_lidar</exec_depend>
+  <exec_depend>robot_real_lidar</exec_depend>
   <exec_depend>go2_real_planner</exec_depend>
-  <exec_depend>g1_real_goal_manager</exec_depend>
+  <exec_depend>robot_real_goal_manager</exec_depend>
   <exec_depend>a_star_mpc_planner</exec_depend>
   <exec_depend>robot_safety</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>

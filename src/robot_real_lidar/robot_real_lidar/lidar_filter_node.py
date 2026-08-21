@@ -44,7 +44,7 @@ def _quat_to_rotmat(qx, qy, qz, qw):
 class LidarFilterNode(Node):
 
     def __init__(self):
-        super().__init__("g1_real_lidar_filter")
+        super().__init__("robot_real_lidar_filter")
 
         # ── Topics & frames ───────────────────────────────────────────────
         self.declare_parameter("raw_topic",       "/livox/lidar")
@@ -90,7 +90,7 @@ class LidarFilterNode(Node):
         self._last_pub_time = self.get_clock().now()
 
         self.get_logger().info(
-            f"g1_real_lidar_filter: {self.raw_topic} ({self.source_frame}) "
+            f"robot_real_lidar_filter: {self.raw_topic} ({self.source_frame}) "
             f"→ {self.filtered_topic} ({self.target_frame}); "
             f"r=[{self.r_min:.2f}, {self.r_max:.2f}] m, "
             f"z=[{self.z_min:.2f}, {self.z_max:.2f}] m, "

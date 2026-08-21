@@ -21,7 +21,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
 
-    share = get_package_share_directory("g1_real_lidar")
+    share = get_package_share_directory("robot_real_lidar")
     default_params = os.path.join(share, "config", "lidar_filter.yaml")
 
     args = [
@@ -33,9 +33,9 @@ def generate_launch_description():
     params_file  = LaunchConfiguration("params_file")
 
     lidar_filter = Node(
-        package="g1_real_lidar",
+        package="robot_real_lidar",
         executable="lidar_filter_node",
-        name="g1_real_lidar_filter",
+        name="robot_real_lidar_filter",
         output="screen",
         parameters=[params_file, {"use_sim_time": use_sim_time}],
     )

@@ -37,7 +37,7 @@ def _yaw_to_quat(yaw):
 class MissionRunnerNode(Node):
 
     def __init__(self):
-        super().__init__("g1_real_mission_runner")
+        super().__init__("robot_real_mission_runner")
 
         self.declare_parameter("mission_file",     "")
         self.declare_parameter("global_goal_topic","/global_goal")

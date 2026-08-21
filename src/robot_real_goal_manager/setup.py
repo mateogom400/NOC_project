@@ -1,7 +1,7 @@
 import glob
 from setuptools import setup
 
-package_name = 'g1_real_goal_manager'
+package_name = 'robot_real_goal_manager'
 
 setup(
     name=package_name,
@@ -22,8 +22,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'goal_relay_node      = g1_real_goal_manager.goal_relay_node:main',
-            'mission_runner_node  = g1_real_goal_manager.mission_runner_node:main',
+            'goal_relay_node      = robot_real_goal_manager.goal_relay_node:main',
+            'mission_runner_node  = robot_real_goal_manager.mission_runner_node:main',
         ],
     },
 )

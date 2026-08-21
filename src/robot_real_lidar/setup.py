@@ -1,7 +1,7 @@
 import glob
 from setuptools import setup
 
-package_name = 'g1_real_lidar'
+package_name = 'robot_real_lidar'
 
 setup(
     name=package_name,
@@ -22,7 +22,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'lidar_filter_node = g1_real_lidar.lidar_filter_node:main',
+            'lidar_filter_node = robot_real_lidar.lidar_filter_node:main',
         ],
     },
 )

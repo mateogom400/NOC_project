@@ -16,7 +16,7 @@ from geometry_msgs.msg import PoseStamped
 class GoalRelayNode(Node):
 
     def __init__(self):
-        super().__init__("g1_real_goal_relay")
+        super().__init__("robot_real_goal_relay")
 
         self.declare_parameter("input_topic",    "/goal_pose")
         self.declare_parameter("output_topic",   "/global_goal")

@@ -1,8 +1,8 @@
 # lidar_filter.yaml
-# Parameters for g1_real_lidar/lidar_filter_node.
+# Parameters for robot_real_lidar/lidar_filter_node.
 # Tweak r_max / voxel_size to balance MPC obstacle coverage against CPU load.
 
-g1_real_lidar_filter:
+robot_real_lidar_filter:
   ros__parameters:
     # ── Topics & frames ──────────────────────────────────────────────────
     raw_topic:      "/livox/lidar"

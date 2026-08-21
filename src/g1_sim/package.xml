@@ -36,8 +36,8 @@
 
   <!-- pacchetti avviati da launch/g1_a_star_mpc.launch.py -->
   <exec_depend>a_star_mpc_planner</exec_depend>
-  <exec_depend>g1_real_lidar</exec_depend>
-  <exec_depend>g1_real_goal_manager</exec_depend>
+  <exec_depend>robot_real_lidar</exec_depend>
+  <exec_depend>robot_real_goal_manager</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>rviz2</exec_depend>
 
