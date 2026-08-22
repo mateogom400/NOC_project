@@ -445,10 +445,15 @@ in fondo a questo documento. Le singole schede qui sotto riportano i numeri nel 
     massimo ottenibile in un problema non convesso;
   - stazionarietà: `‖∇_x L(x*, λ*)‖_∞ = 6.1e-11` contro `‖∇_x f(x*)‖_∞ = 1.6e+04`.
 
-- **Il risultato che vale la pena raccontare** — la **dimensione del cono critico collassa
-  da 45 a 1** lungo la missione. A fine corsa restano 141 variabili e 140 vincoli attivi:
-  un solo grado di libertà. L'MPC passa da *guidato dal costo* a **guidato dai vincoli**, e
-  nella fase finale non sta più scegliendo una traiettoria, la sta subendo.
+- **Il risultato che vale la pena raccontare** — la dimensione del cono critico **varia fra
+  45 e 1** a seconda del punto di lavoro. Nei cicli più vincolati restano 141 variabili e 140
+  vincoli attivi: **un solo grado di libertà residuo**. Lì l'MPC non sta più *scegliendo* una
+  traiettoria, la sta subendo: è guidato dai vincoli, non dal costo.
+
+  *(Correzione rispetto a una prima lettura: non è un collasso monotono lungo la missione.
+  Campionando l'intera run si ottiene 45 → 1 → 21 → 4 → 8. Vale l'identità esatta
+  `dim(cono) = n_var − vincoli attivi`, quindi la dimensione è semplicemente il complemento
+  della saturazione, e segue la difficoltà istantanea della manovra invece del tempo.)*
 
   La ripartizione dei vincoli attivi lo spiega: `|vy| ≤ vy_max` e `|w| ≤ omega_max` sono
   saturati **15 volte su 15** nei cicli finali, e `vx ≥ 0` 14 su 15. Conferma quantitativa
@@ -877,14 +882,12 @@ in fondo a questo documento. Le singole schede qui sotto riportano i numeri nel 
 
 | # | Voce | §guida | Sforzo | Dipende da |
 |---|---|---|---|---|
-| 10 | **Path following in θ** (elimina `v_ref`) | 1.1 | M | — |
-| 11 | **Vincolo ostacolo con slack + penalità ℓ¹ esatta, ρ da μ\*** | 2.2 | M | 2 |
-| 12 | **Vincolo terminale di equilibrio + fattibilità ricorsiva** | 1.2 | M | — |
-| 13 | Mid-point (RK2) al posto di Euler + fit dell'ordine | 3.1 | S | — |
 | 14 | Sweep dell'orizzonte N: prestazione vs tempo di calcolo | 1.3 | M | — |
-| 15 | Fronte di Pareto sui dati esistenti | 1.8 | M | 10 (sinergia) |
+| 15 | Fronte di Pareto sui dati esistenti | 1.8 | M | 10 (fatto: dà già tre obiettivi pesati) |
 | 16 | Omotopia su `obs_alpha` | 1.7, 2.5 | M | — |
 | 17 | Move blocking / forma in incrementi | 1.6 | S/M | — |
+
+*(10, 11, 12 e 13 sono fatti: vedi §10.8, §10.4, §10.9, §10.2.)*
 
 ### Blocco C — il pezzo grosso
 
@@ -907,6 +910,34 @@ sperimentale esiste già ed è insolitamente concreto.
 ---
 
 ### Riproducibilità
+
+**Un comando genera tutti i numeri del report:**
+
+```bash
+python3 viz/make_results.py            # ~40 s
+# -> viz/out/results.json   tutti i numeri, strutturati
+# -> viz/out/results.md     gli stessi, in tabelle pronte
+```
+
+I numeri del report **non vanno copiati a mano** dal terminale: appena si ritocca un
+parametro divergono dal codice in silenzio — è già successo qui con
+`guides/snippets/nlp_structure.py`, rimasto ai parametri del Go2 dopo il porting al G1.
+`make_results.py` calcola ogni valore dagli **stessi moduli** usati dagli strumenti
+interattivi, e il file porta con sé la provenienza: commit git, se l'albero era sporco,
+profilo, versioni di CasADi e numpy.
+
+Le misure sono raggruppate per **classe**, perché la classe decide se vanno rifatte:
+
+| classe | cosa contiene | va rifatta? |
+|---|---|---|
+| **1** — proprietà della formulazione | ordine dell'integratore, AD contro differenze finite, sparsità dell'NLP, legge della penalità esatta | **No.** Non dipendono da nessuna run: si calcolano una volta |
+| **2** — proprietà dell'istanza | KKT, active set, cono critico, moltiplicatori, soglia di biforcazione | **Come profilo**, non come numero singolo: variano ciclo per ciclo dentro la stessa missione |
+| **3** — prestazione in anello chiuso | errore di predizione, θ contro tempo, costo del vincolo terminale | **Sì**, e qui servono davvero più missioni e più mondi |
+
+Opzioni utili: `--quick` (meno punti, per provare), `--only classe1 classe2`,
+`--bag viz/bags/<altra_run>` per rigenerare la sola classe 3 su una missione diversa.
+
+
 
 Gli snippet di supporto stanno in `guides/snippets/`. `nlp_structure.py` riproduce i numeri
 della §0 e accetta una lista di orizzonti per la tabella della §1.5:
@@ -995,6 +1026,11 @@ seconda sblocca la terza, e la terza è il risultato più caratterizzante per l'
 | 13 | Integratore RK2 (punto medio) | 3.1 | `MPCConfig.integrator`, param ROS `mpc_integrator` | `python3 tests/test_integrators.py` |
 | 2 | KKT, LICQ, complementarità, SOC-C-2 | 2.1 | `viz/kkt_analysis.py` | `python3 viz/kkt_analysis.py --bag viz/bags/industrial_plant_fix` |
 | 11 | Penalità esatta ℓ¹ con slack | 2.2 | `MPCConfig.obstacle_mode`, `viz/exact_penalty.py` | `python3 viz/exact_penalty.py --scenario narrow_gap --d-safe 1.1` |
+| 6 | Soglia di biforcazione di x\*(ϑ) | 5.4 | `viz/bifurcation_sweep.py` | `python3 viz/bifurcation_sweep.py --scenario centred_pillar` |
+| 4 | AD contro differenze finite; Hessiana esatta contro L-BFGS | 4.1 | `MPCConfig.hessian`, `MPCResult.timings`, `viz/ad_vs_fd.py` | `python3 viz/ad_vs_fd.py` |
+| 8 | Errore di predizione modello contro impianto | 1.4 | `viz/prediction_error.py` | `python3 viz/prediction_error.py viz/bags/industrial_plant_fix` |
+| 10 | **Path following in θ** | 1.1 | `MPCConfig.path_mode`, param ROS `mpc_path_mode` | `python3 viz/formulation_compare.py` |
+| 12 | **Vincolo terminale di equilibrio** | 1.2 | `MPCConfig.terminal_constraint`, param ROS `mpc_terminal_constraint` | `python3 viz/formulation_compare.py` |
 | — | Struttura e sparsità dell'NLP | 0, 1.5 | `guides/snippets/nlp_structure.py` | `python3 guides/snippets/nlp_structure.py 10 15 25 50` |
 | — | Pannelli di visualizzazione + replay da bag | — | `viz/` | vedi [`visualizzazione_ottimizzazione.md`](visualizzazione_ottimizzazione.md) |
 
@@ -1002,6 +1038,8 @@ seconda sblocca la terza, e la terza è il risultato più caratterizzante per l'
 ciclo reale dà `J*` **bit-identico** al valore pre-modifiche (8177.231314839336), con gli stessi
 156 vincoli e nessuna variabile di slack allocata. L'unica modifica al comportamento è
 `mpc_integrator: 'midpoint'` nel profilo G1, ed è reversibile cambiando una riga di YAML.
+Anche `path_mode` e `terminal_constraint` sono spenti per default (`time` e `none`) ed
+esposti come parametri ROS, quindi si accendono da YAML senza toccare il codice.
 
 ---
 
@@ -1111,20 +1149,196 @@ la scheda prevedeva, e va rimisurato prima e dopo.
 
 ---
 
-### 10.5 Da fare, in ordine di priorità
+### 10.5 Biforcazione: la soglia sta a W_obs ≈ 250, il deployato è 120
+
+`viz/bifurcation_sweep.py` risolve lo **stesso** problema due volte, con warm start
+spinto a sinistra e a destra, e misura la distanza fra le due soluzioni in ℝ¹⁴¹ al variare
+di `W_obs_sigmoid`. È la Fig. 4.17 delle dispense costruita sui dati del progetto.
+
+Scenario `centred_pillar`:
+
+| W_obs | separazione | J\* sinistra | J\* destra | esito |
+|---|---|---|---|---|
+| 60 | 0.0000 | 4953.17 | 4953.17 | minimo unico |
+| **120** *(deployato)* | **0.0000** | 9244.06 | 9244.06 | minimo unico |
+| 200 | 0.0000 | 14251.90 | 14251.90 | minimo unico |
+| 300 | 3.6888 | 20012.89 | 20122.31 | **biforca** |
+| 600 | 3.9752 | 36018.82 | 36186.52 | **biforca** |
+| 1400 | 4.4877 | 76236.16 | 76606.00 | **biforca** |
+
+**La soglia sta fra 200 e 300**, e il valore in esercizio (120) è sotto. Ai pesi deployati
+il minimizzatore è quindi unico e regolare in x₀ nel senso del Thm 4.4.6 — il che significa
+che `_COST_SPIKE_FACTOR = 5.0` in `mpc_tracker.py` **sta proteggendo da un fenomeno che non
+si verifica**.
+
+Due dettagli che vale la pena riportare:
+
+- quando biforca, i due `J*` **non coincidono** (20012.89 contro 20122.31): i due minimi non
+  sono equivalenti, quindi il warm start non decide solo *dove* finisci ma *quanto paghi*;
+- sul **ciclo reale** estratto dalla bag non biforca **nemmeno a W_obs = 1400**. La spiegazione
+  è nella §10.3: quel ciclo ha un cono critico di dimensione 1. Con un solo grado di libertà
+  residuo non c'è spazio geometrico per due bacini distinti — la saturazione dei vincoli
+  uccide la biforcazione prima ancora che il peso possa crearla.
+
+---
+
+### 10.6 AD contro differenze finite: i tre numeri del corso, verificati
+
+`viz/ad_vs_fd.py` misura il costo e l'accuratezza del gradiente sull'obiettivo
+**effettivamente minimizzato** dall'MPC (n = 141 variabili), non su una funzione di prova.
+
+| metodo | valutazioni di f | tempo | accuratezza |
+|---|---|---|---|
+| differenze in avanti | 142 = n+1 | 35.9 ms | 5.5·10⁻⁸ |
+| differenze centrate | 282 = 2n | 71.4 ms | 1.3·10⁻¹⁰ |
+| **AD in modo inverso** | **2.1** | **0.53 ms** | precisione macchina |
+
+Tutte e tre le previsioni delle dispense sono confermate: l'AD costa **meno di 3 valutazioni
+indipendentemente da n** (§5.3), e i passi ottimi misurati sono esattamente quelli teorici —
+l'errore in avanti è minimo a `h = √eps = 1.49·10⁻⁸` e quello centrato a
+`h = eps^(1/3) = 6.06·10⁻⁶`, con accuratezze ≈10⁻⁸ e ≈10⁻¹⁰ contro le ≈10⁻⁸ e ≈10⁻¹¹ previste.
+
+**Perché conta per questo progetto**: a 8 Hz il budget per ciclo è 125 ms, e le sole
+differenze centrate ne userebbero il **30 %** — per il solo gradiente, senza contare il
+solve. E il rapporto peggiora **linearmente con n**, quindi con l'orizzonte: è l'argomento
+quantitativo che rende discutibile allungare N (§1.3).
+
+Sono ora esposti anche `MPCResult.status` (lo stato di uscita di IPOPT, che dice *perché* un
+solve fallisce e non solo *che* è fallito) e `MPCResult.timings`, con i tempi per callback:
+su un solve tipico, `hess_l` 7.96 ms, `grad_f` 4.01 ms, `f` 2.94 ms, `g` 2.29 ms,
+`jac_g` 1.08 ms.
+
+**Hessiana esatta contro L-BFGS** (`MPCConfig.hessian`), stesso problema:
+
+| Hessiana | iterazioni | tempo | J\* |
+|---|---|---|---|
+| esatta (da AD) | **20** | 318.6 ms | 9244.061 |
+| L-BFGS | **36** | 314.5 ms | 9244.061 |
+
+Stesso minimo, ma L-BFGS impiega **l'80 % di iterazioni in più**. Il tempo totale si
+pareggia perché ogni iterazione costa meno: è esattamente il compromesso Newton /
+quasi-Newton del §4.4.4, misurato senza scrivere un solutore.
+
+---
+
+### 10.7 Errore di predizione: il modello sbaglia 7 volte più dell'integratore
+
+`viz/prediction_error.py` confronta la traiettoria predetta (`/mpc/predicted_path`, salvata
+al tempo t) con quella **effettivamente percorsa** (`/robot_pose` ai tempi t + k·dt), su
+tutti i 775 cicli della bag. Nessun nuovo esperimento: i dati c'erano già.
+
+| k | orizzonte [s] | errore mediano [m] | p95 [m] | max [m] |
+|---|---|---|---|---|
+| 0 | 0.00 | 0.0244 | 0.0613 | 0.1046 |
+| 3 | 0.60 | 0.0445 | 0.1089 | 0.1783 |
+| 6 | 1.20 | 0.0586 | 0.1872 | 0.2737 |
+| 9 | 1.80 | 0.0816 | 0.2639 | 0.4522 |
+| 15 | 3.00 | 0.1487 | 0.3519 | 0.5137 |
+
+L'errore a **k = 0 non è errore di modello**: lì lo stato predetto *è* x₀, imposto come
+vincolo di uguaglianza. I 2.4 cm misurano il disallineamento fra l'istante in cui la
+predizione viene pubblicata e quello in cui la posa viene campionata — a ~0.08 m/s
+corrispondono a **318 ms**, coerenti con il periodo di ciclo misurato (§3.2). Va sottratto
+per isolare la divergenza vera.
+
+**Divergenza al netto dell'offset: 0.042 m per secondo di predizione, 0.124 m a fine
+orizzonte.**
+
+Questo chiude il cerchio con la §10.2. La divergenza di modello è **7 volte** l'errore di
+discretizzazione di Euler (1.74 cm) e **1428 volte** quello del punto medio (0.0087 cm).
+È la spiegazione quantitativa del perché passare a RK2 migliori la predizione di 200× ma
+l'anello chiuso di appena l'1 %: **l'integratore non è mai stato il termine dominante**.
+Il termine dominante è che un uniciclo non descrive un G1 a 29 gradi di libertà che cammina.
+
+---
+
+### 10.8 Path following in θ: il robot va il 40 % più lontano, e un parametro sparisce
+
+`MPCConfig.path_mode = 'theta'` implementa la eq. (7.5): l'ascissa curvilinea diventa una
+variabile decisionale, con `θ(0) = 0`, `Δθ ≥ 0`, `θ(N) ≤ 1` e `+ α₃(1−θ)²` nel costo.
+
+Il riferimento `z̄(θ)` è rappresentato da un **polinomio** i cui coefficienti sono parametri,
+rifittati a ogni solve sul path A\*. Serve perché θ è una variabile decisionale e IPOPT è un
+metodo di tipo Newton: una spezzata fra waypoint avrebbe derivata seconda discontinua a ogni
+nodo. L'orientamento di riferimento viene dalla **tangente** del polinomio, quindi non è più
+una scelta separata.
+
+Misurato su 6 cicli in movimento della bag reale:
+
+| grandezza | riferimento a tempo | ascissa θ |
+|---|---|---|
+| vx media comandata [m/s] | 0.2139 | **0.2989** |
+| spostamento sull'orizzonte [m] | 0.6352 | **0.8914** |
+| passi con vx a saturazione | — | 14.8 / 15 |
+| iterazioni IPOPT | 11.8 | 20.0 |
+
+**Il robot avanza il 40 % in più a parità di orizzonte.** La ragione è esattamente quella che
+il corso anticipa: `v_ref = 0.2` m/s contro `vx_max = 0.3` lasciava inutilizzato il **33 %**
+della velocità disponibile. In modo θ il solutore satura `vx_max` in 14.8 passi su 15 — decide
+lui la velocità lungo il percorso, che è il punto della §7.2.4.
+
+E il parametro **non viene sostituito** da un altro da tarare: θ è una variabile, non un
+iperparametro. Il peso α₃ esiste, ma il suo effetto è debole proprio perché il robot è già
+saturato in velocità (θ(N) passa da 0.099 a 0.136 mentre α₃ varia di 100×).
+
+Il prezzo è **+70 % di iterazioni** (11.8 → 20.0): l'NLP ha N+1 variabili e N disuguaglianze
+in più, ed è meno ben condizionato.
+
+> **Una trappola trovata provando.** Sui cicli in cui il robot è **fermo** (fine missione,
+> `vx ≥ 0` attivo) il confronto non dice nulla: θ avanzerebbe senza che il robot possa
+> seguirlo, e con α₃ alto si osserva θ → 1 mentre il robot resta immobile — il riferimento si
+> stacca dalla dinamica. `formulation_compare.py` seleziona quindi solo i cicli con
+> `|v| > 0.15` m/s e path più lungo di 1.5 m.
+
+---
+
+### 10.9 Vincolo terminale: sul G1 non costa nulla, e il motivo è la degenerazione del lag
+
+`MPCConfig.terminal_constraint = 'equilibrium'` impone `v(N) = 0` — esiste sempre una
+traiettoria di frenata dentro l'orizzonte — rilassato con slack e penalizzato in **norma 1**,
+come raccomandano le dispense. Per ρ > max|μ\*| lo slack va esattamente a zero (Thm 6.3.1),
+quindi il vincolo è di fatto hard quando è soddisfacibile e cede solo quando non lo è.
+
+Su 6 cicli reali lo **slack è sempre esattamente zero**: il robot riesce sempre a fermarsi.
+Il costo del vincolo varia molto col ciclo, da **+0.2 % a +75 %** — è alto proprio dove `J*` è
+piccolo, cioè dove il robot stava viaggiando bene e ora deve prevedere anche la frenata.
+
+**Perché lo slack è sempre nullo**: con `τ = 0.001` contro `dt = 0.2` il lag è degenere
+(§0 punto 2), cioè `v(k+1) = u(k)`, e il robot azzera la velocità in **un passo**. Il vincolo
+terminale è quindi banalmente soddisfacibile.
+
+Questo però non dimostrerebbe che il vincolo funziona — "slack sempre zero" non distingue un
+vincolo facile da un vincolo non implementato. La controprova, con τ realistico:
+
+| τ [s] | lag | v₀ [m/s] | slack | esito |
+|---|---|---|---|---|
+| 0.001 | 1.000000 | 0.3 | 0 | si ferma |
+| 0.001 | 1.000000 | 1.2 | 0 | si ferma |
+| 0.5 | 0.329680 | 0.3 | 3.0·10⁻² | **non si ferma** |
+| 0.5 | 0.329680 | 1.2 | 9.4·10⁻³ | **non si ferma** |
+| 2.0 | 0.095163 | 0.3 | 1.1·10⁻¹ | **non si ferma** |
+| 2.0 | 0.095163 | 1.2 | 2.7·10⁻¹ | **non si ferma** |
+
+Lo slack cresce con τ: più lento l'attuatore, meno l'orizzonte basta a fermarsi. È la lettura
+fisica dell'insieme di fattibilità **F** del §7.2.5. Sul G1 deployato il vincolo terminale non
+costa nulla in ammissibilità; su hardware con un τ vero sarebbe **il vincolo che decide la
+velocità massima sicura**.
+
+**Il legame con il latch della §10.3**: quel bug era la gestione ad hoc di una perdita di
+fattibilità ricorsiva. Con il vincolo terminale attivo la fattibilità è garantita per
+costruzione, e il fallback diventa una rete di sicurezza invece che il meccanismo principale.
+
+---
+
+### 10.10 Da fare, in ordine di priorità
 
 Il criterio: prima ciò che ha l'infrastruttura già pronta, poi ciò che cambia la formulazione,
 infine il pezzo grosso.
 
-**Subito, infrastruttura già pronta**
+Tutte le voci a infrastruttura pronta (6, 4, 8) e le due riformulazioni ⭐ (10, 12) sono
+**fatte**. Quello che resta è elencato qui sotto.
 
-| # | Voce | §guida | Perché ora |
-|---|---|---|---|
-| 6 | Sweep di W_obs: soglia di biforcazione | 5.4 | `decision_plane.py --set` fa già il singolo punto; manca solo il ciclo esterno. Dà la Fig. 4.17 sui dati propri |
-| 4 | AD vs differenze finite, `t_proc_nlp_*` | 4.1 | CasADi restituisce già le statistiche in `sol.stats()`; oggi ne leggiamo solo `iter_count` |
-| 8 | Errore di predizione modello vs impianto MuJoCo | 1.4 | `/mpc/predicted_path` e `/robot_pose` sono già nelle bag: è sola analisi, nessun nuovo esperimento |
-
-**Poi, riformulazioni da validare**
+**Riformulazioni da validare**
 
 | # | Voce | §guida | Nota |
 |---|---|---|---|
@@ -1146,7 +1360,7 @@ referente esplicito.
 
 ---
 
-### 10.6 Come verificare che tutto giri ancora
+### 10.11 Come verificare che tutto giri ancora
 
 ```bash
 source /opt/ros/humble/setup.bash && source install/setup.bash
@@ -1154,8 +1368,12 @@ source /opt/ros/humble/setup.bash && source install/setup.bash
 python3 tests/test_integrators.py        # ordine 1.00 / 2.00, scarto NLP 0.000e+00
 python3 viz/test_fidelity.py             # costo replicato == opti.f, errore 0.000e+00
 python3 guides/snippets/nlp_structure.py # struttura dell'NLP deployato
-python3 viz/kkt_analysis.py   --bag viz/bags/industrial_plant_fix
-python3 viz/exact_penalty.py  --scenario narrow_gap --d-safe 1.1
+python3 viz/kkt_analysis.py      --bag viz/bags/industrial_plant_fix
+python3 viz/exact_penalty.py     --scenario narrow_gap --d-safe 1.1
+python3 viz/bifurcation_sweep.py --scenario centred_pillar
+python3 viz/ad_vs_fd.py
+python3 viz/prediction_error.py  viz/bags/industrial_plant_fix
+python3 viz/formulation_compare.py
 python3 viz/cost_field.py     --bag viz/bags/industrial_plant_fix
 python3 viz/decision_plane.py --bag viz/bags/industrial_plant_fix
 ```

@@ -76,6 +76,93 @@ def active_mask(g, lbg, ubg, is_eq, tol=TOL_ACT):
     return (~is_eq) & (at_lo | at_hi), at_lo, at_hi
 
 
+def analyze(cfg, x0, path, obs) -> dict:
+    """
+    Tutte le grandezze KKT di UN ciclo, in forma strutturata.
+
+    Separata da main() apposta: il generatore di risultati
+    (viz/make_results.py) deve poter riusare esattamente questo calcolo, non
+    una sua copia — due implementazioni della stessa misura divergono al primo
+    ritocco, ed e' cosi' che i numeri di un report smettono di corrispondere al
+    codice.
+    """
+    tracker = common.make_tracker(cfg)
+    res = tracker.solve(np.asarray(x0, float), path, obstacle_points_2d=obs)
+    opti = tracker._opti
+    N = cfg.N
+
+    g, lbg, ubg, lam, is_eq = classify_constraints(opti)
+    active_all, at_lo, at_hi = active_mask(g, lbg, ubg, is_eq)
+    n_eq = int(is_eq.sum())
+    n_ineq = len(g) - n_eq
+    idx_ineq = np.nonzero(~is_eq)[0]
+    act_i = active_all[idx_ineq]
+    mu_i = lam[idx_ineq]
+    strong = act_i & (np.abs(mu_i) > TOL_MU)
+    weak = act_i & (np.abs(mu_i) <= TOL_MU)
+
+    # Jacobiano dei vincoli attivi -> LICQ e cono critico
+    idx_att = list(np.nonzero(is_eq | active_all)[0])
+    J = ca.Function("J", [opti.x, opti.p], [ca.jacobian(opti.g, opti.x)])
+    xv, pv = opti.debug.value(opti.x), opti.debug.value(opti.p)
+    A = np.array(J(xv, pv))[idx_att, :]
+    rank = int(np.linalg.matrix_rank(A))
+
+    # stazionarieta' e Hessiana della lagrangiana
+    lam_s = ca.MX.sym("lam", opti.g.shape[0])
+    L = opti.f + ca.dot(lam_s, opti.g)
+    gL = ca.Function("gL", [opti.x, opti.p, lam_s], [ca.gradient(L, opti.x)])
+    r_stat = float(np.abs(np.array(gL(xv, pv, lam)).ravel()).max())
+    gf = ca.Function("gf", [opti.x, opti.p], [ca.gradient(opti.f, opti.x)])
+    r_gradf = float(np.abs(np.array(gf(xv, pv)).ravel()).max())
+
+    H = ca.Function("H", [opti.x, opti.p, lam_s], [ca.hessian(L, opti.x)[0]])
+    Hv = np.array(H(xv, pv, lam)); Hv = 0.5 * (Hv + Hv.T)
+    _, sv, Vt = np.linalg.svd(A)
+    tol = max(A.shape) * (sv.max() if sv.size else 0.0) * np.finfo(float).eps
+    ns = Vt[np.sum(sv > tol):].T
+    ev_min = ev_max = float("nan")
+    if ns.shape[1]:
+        ev = np.linalg.eigvalsh(0.5 * (ns.T @ Hv @ ns + (ns.T @ Hv @ ns).T))
+        ev_min, ev_max = float(ev.min()), float(ev.max())
+
+    # ripartizione dei box attivi: per ogni k l'ordine e'
+    # [vx>=0, vx<=vx_max, |vy|<=vy_max, |w|<=omega_max]
+    etichette = ["vx>=0", "vx<=vx_max", "|vy|<=vy_max", "|w|<=omega_max"]
+    ripart = {}
+    for j, e in enumerate(etichette):
+        sel = np.arange(len(idx_ineq)) % 4 == j
+        ripart[e] = int(act_i[sel].sum())
+
+    return {
+        "success": bool(res.success),
+        "J": float(res.cost),
+        "iterazioni": int(res.iterations),
+        "n_var": int(opti.x.shape[0]),
+        "n_con": int(len(g)),
+        "n_eq": n_eq,
+        "n_ineq": n_ineq,
+        "residuo_eq": float(np.abs(g[is_eq] - lbg[is_eq]).max()),
+        "n_attivi_ineq": int(act_i.sum()),
+        "n_fortemente_attivi": int(strong.sum()),
+        "n_debolmente_attivi": int(weak.sum()),
+        "complementarita_stretta": bool(weak.sum() == 0),
+        "n_attivi_totali": len(idx_att),
+        "rango_jacobiano_attivo": rank,
+        "licq": bool(rank == len(idx_att)),
+        "dim_cono_critico": int(ns.shape[1]),
+        "hess_proj_lambda_min": ev_min,
+        "hess_proj_lambda_max": ev_max,
+        "soc_c2": bool(np.isfinite(ev_min) and ev_min > 0),
+        "grad_L_inf": r_stat,
+        "grad_f_inf": r_gradf,
+        "max_lambda_eq": float(np.abs(lam[is_eq]).max()),
+        "max_mu_ineq": float(np.abs(mu_i[strong]).max()) if strong.any() else 0.0,
+        "box_attivi": ripart,
+        "N": int(N),
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)

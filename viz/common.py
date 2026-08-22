@@ -60,8 +60,40 @@ def load_profile(path: str = DEFAULT_PROFILE,
         obs_check_radius=float(raw["mpc_obs_check_radius"]),
         max_iter=int(raw["mpc_max_iter"]), warm_start=bool(raw["mpc_warm_start"]),
         integrator=str(raw.get("mpc_integrator", "euler")),
+        path_mode=str(raw.get("mpc_path_mode", "time")),
+        theta_progress_weight=float(raw.get("mpc_theta_progress_weight", 50.0)),
+        terminal_constraint=str(raw.get("mpc_terminal_constraint", "none")),
+        terminal_rho=float(raw.get("mpc_terminal_rho", 5.0e3)),
     )
     return cfg, raw
+
+
+# ---------------------------------------------------------------------------
+# Micro-benchmark
+# ---------------------------------------------------------------------------
+def time_call(fn, repeats: int = 200, blocks: int = 5, warmup: int = 20) -> float:
+    """
+    Tempo per chiamata [s], robusto al rumore.
+
+    Un singolo ciclo cronometrato da' misure inaffidabili: la prima chiamata
+    paga allocazioni e cache fredde, e lo scheduler introduce code lunghe. Con
+    la media si e' arrivati a misurare un gradiente AD piu' veloce di una
+    valutazione della funzione — un rapporto impossibile.
+
+    Si scarta quindi un warm-up e si prende il MINIMO fra piu' blocchi: il
+    minimo e' lo stimatore giusto per un tempo di calcolo, perche' il rumore
+    puo' solo rallentare, mai accelerare.
+    """
+    import time as _t
+    for _ in range(warmup):
+        fn()
+    best = float("inf")
+    for _ in range(blocks):
+        t0 = _t.perf_counter()
+        for _ in range(repeats):
+            fn()
+        best = min(best, (_t.perf_counter() - t0) / repeats)
+    return best
 
 
 # ---------------------------------------------------------------------------

@@ -94,6 +94,12 @@ class MPCNode(Node):
         # Schema di integrazione del canale di posizione (dispense §2.1.3):
         # 'euler' (eq. 2.9, ordine 1) oppure 'midpoint' (eq. 2.10, ordine 2).
         self.declare_parameter('mpc_integrator', 'euler')
+        # Riformulazioni del Capitolo 7 (roadmap §1.1 e §1.2). Entrambe
+        # spente per default: il comportamento deployato resta invariato.
+        self.declare_parameter('mpc_path_mode', 'time')          # 'time' | 'theta'
+        self.declare_parameter('mpc_theta_progress_weight', 50.0)
+        self.declare_parameter('mpc_terminal_constraint', 'none')  # 'none' | 'equilibrium'
+        self.declare_parameter('mpc_terminal_rho', 5.0e3)
         self.declare_parameter('mpc_max_iter',   100)
         self.declare_parameter('mpc_warm_start',  True)
         self.declare_parameter('mpc_rate_hz',       2.0)
@@ -129,6 +135,12 @@ class MPCNode(Node):
             N             = int(self.get_parameter('mpc_N').value),
             dt            = float(self.get_parameter('mpc_dt').value),
             integrator    = str(self.get_parameter('mpc_integrator').value),
+            path_mode     = str(self.get_parameter('mpc_path_mode').value),
+            theta_progress_weight = float(
+                self.get_parameter('mpc_theta_progress_weight').value),
+            terminal_constraint = str(
+                self.get_parameter('mpc_terminal_constraint').value),
+            terminal_rho  = float(self.get_parameter('mpc_terminal_rho').value),
             tau_v         = float(self.get_parameter('mpc_tau_v').value),
             tau_w         = float(self.get_parameter('mpc_tau_w').value),
             vx_max        = float(self.get_parameter('mpc_vx_max').value),

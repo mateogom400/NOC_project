@@ -114,6 +114,36 @@ class MPCConfig:
     # riguarda solo px/py, dove il termine R(yaw)*v va integrato numericamente.
     integrator: str = 'euler'
 
+    # Hessiana usata da IPOPT: 'exact' (da AD) oppure 'limited-memory' (L-BFGS).
+    # Vedi guides/roadmap_teorica_noc.md §4.1 e viz/ad_vs_fd.py.
+    hessian: str = 'exact'
+
+    # Ingredienti terminali (dispense §7.2.5, eq. 3.11f)
+    #   'none'        : nessun vincolo terminale, solo il costo Q_terminal.
+    #                   E' la formulazione storica: la fattibilita' ricorsiva
+    #                   non e' garantita e va gestita con euristiche.
+    #   'equilibrium' : v(N) = 0, cioe' lo stato terminale e' un equilibrio.
+    #                   Lettura fisica: esiste sempre una traiettoria di frenata
+    #                   dentro l'orizzonte, quindi la coda della soluzione
+    #                   precedente piu' l'ingresso nullo resta ammissibile.
+    # Il vincolo e' SOFT: rilassato con slack e penalizzato in norma 1, come
+    # raccomandano le dispense, cosi' il problema resta sempre ammissibile.
+    terminal_constraint: str = 'none'
+    terminal_rho: float = 5.0e3   # peso l1 sullo slack terminale
+
+    # Parametrizzazione del riferimento (dispense §7.2.4, eq. 7.5)
+    #   'time'  : z_ref campionato lungo il path a velocita' COSTANTE v_ref.
+    #             E' la scelta arbitraria che il corso raccomanda di eliminare:
+    #             se il robot rallenta, il riferimento gli scappa avanti e il
+    #             costo cresce per ragioni che non riguardano il controllo.
+    #   'theta' : l'ascissa curvilinea theta diventa variabile decisionale, con
+    #             theta(0)=0, dtheta>=0, theta(N)<=1 e + w_progress*(1-theta)^2
+    #             nel costo. La velocita' lungo il percorso la sceglie il
+    #             solutore invece di imporla a mano.
+    path_mode: str = 'time'
+    theta_progress_weight: float = 50.0   # alpha_3 della eq. (7.5)
+    theta_poly_deg: int = 5               # grado del polinomio che rappresenta z(theta)
+
     # IPOPT
     max_iter:   int  = 100
     warm_start: bool = True
@@ -142,6 +172,14 @@ class MPCResult:
     # dice quanto e' condizionato il problema, e oggi non veniva ne' letta ne'
     # esposta pur essendo gratis in sol.stats(). Vedi roadmap §3.5.
     iterations:    int = -1
+    # Stato di uscita di IPOPT ('Solve_Succeeded', 'Maximum_Iterations_Exceeded',
+    # 'Restoration_Failed', ...). Distinguere PERCHE' un solve fallisce e' un
+    # dato diverso dal sapere CHE e' fallito.
+    status:        str = ''
+    # Tempo speso nelle callback, in secondi, cosi' come lo riporta CasADi.
+    # Le voci grad_f / jac_g / hess_l sono il costo dell'AD: e' il numero che
+    # rende quantitativo il confronto con le differenze finite (roadmap §4.1).
+    timings:       dict = field(default_factory=dict)
 
     @property
     def next_position(self) -> np.ndarray:
@@ -193,6 +231,9 @@ class MPCTracker:
         self._X:      Optional[ca.MX]   = None
         self._U:      Optional[ca.MX]   = None
         self._S:      Optional[ca.MX]   = None   # slack ostacoli (solo modi l1/l2)
+        self._TH:     Optional[ca.MX]   = None   # ascissa curvilinea (solo path_mode='theta')
+        self._ST:     Optional[ca.MX]   = None   # slack terminale (solo terminal_constraint)
+        self._p_poly: Optional[ca.MX]   = None   # coefficienti di z(theta)
         self._p_x0:   Optional[ca.MX]   = None
         self._p_xref: Optional[ca.MX]   = None
         self._p_obs:  Optional[ca.MX]   = None
@@ -321,6 +362,54 @@ class MPCTracker:
         # variabili decisionali; una colonna di slack la' sarebbe libera e, con
         # il costo lineare della l1, renderebbe l'NLP illimitato inferiormente.
         S = opti.variable(n_obs, N) if hard_obs else None
+
+        # Ascissa curvilinea come variabile decisionale (dispense §7.2.4, eq. 7.5).
+        # Il riferimento geometrico e' rappresentato da un polinomio in theta i
+        # cui coefficienti sono PARAMETRI, rifittati a ogni solve sul path A*:
+        # cosi' z(theta) resta liscio e derivabile, che e' cio' che serve a un
+        # metodo di tipo Newton (una interpolazione a tratti non lo sarebbe).
+        theta_mode = (cfg.path_mode == 'theta')
+        deg = int(cfg.theta_poly_deg)
+        TH = opti.variable(N + 1) if theta_mode else None
+        p_poly = opti.parameter(2, deg + 1) if theta_mode else None
+
+        def _poly(coef_row, t):
+            """Valuta sum_j c_j * t^j (Horner)."""
+            out = coef_row[0, deg]
+            for j in range(deg - 1, -1, -1):
+                out = out * t + coef_row[0, j]
+            return out
+
+        def _dpoly(coef_row, t):
+            """Derivata rispetto a theta dello stesso polinomio."""
+            out = coef_row[0, deg] * deg
+            for j in range(deg - 1, 0, -1):
+                out = out * t + coef_row[0, j] * j
+            return out
+
+        def _ref_at(t):
+            """(x, y, yaw) del riferimento all'ascissa t."""
+            xr = _poly(p_poly[0, :], t)
+            yr = _poly(p_poly[1, :], t)
+            # La tangente da' l'orientamento desiderato: non va piu' scelto a mano.
+            yawr = ca.atan2(_dpoly(p_poly[1, :], t), _dpoly(p_poly[0, :], t))
+            return xr, yr, yawr
+
+        def _track_cost(k_state, t, Wx, Wy, Wyaw):
+            """Errore di inseguimento contro z(theta), con yaw avvolto."""
+            xr, yr, yawr = _ref_at(t)
+            dyaw = ca.atan2(ca.sin(k_state[2] - yawr), ca.cos(k_state[2] - yawr))
+            return (Wx * (k_state[0] - xr) ** 2 +
+                    Wy * (k_state[1] - yr) ** 2 +
+                    Wyaw * dyaw ** 2)
+
+        # Slack sul vincolo terminale di equilibrio (§7.2.5). Uno per componente
+        # di velocita': il vincolo e' |v_i(N)| <= s_i, con s_i >= 0 penalizzato
+        # in norma 1. Tenerlo soft e' cio' che raccomandano le dispense: un
+        # vincolo terminale hard rende l'NLP inammissibile appena il robot entra
+        # in uno stato da cui non riesce a fermarsi entro l'orizzonte.
+        term_eq = (cfg.terminal_constraint == 'equilibrium')
+        ST = opti.variable(3) if term_eq else None
         # I vincoli di ostacolo sono i PRIMI aggiunti (stanno dentro il ciclo che
         # costruisce il costo), in coppie [dist >= d_safe - S, S >= 0] per ogni
         # (passo, ostacolo). Registrare la fetta permette di leggere i mu del
@@ -339,8 +428,15 @@ class MPCTracker:
 
         for k in range(N):
             # Position + yaw tracking
-            e    = X[:, k] - p_xref[:, k]
-            cost += ca.mtimes([e.T, Q, e])
+            if theta_mode:
+                cost += _track_cost(X[:, k], TH[k], cfg.Q_x, cfg.Q_y, cfg.Q_yaw)
+                # Termine di avanzamento della eq. (7.5): spinge theta verso 1,
+                # cioe' verso la fine del percorso. E' cio' che sostituisce la
+                # velocita' di crociera imposta a mano.
+                cost += cfg.theta_progress_weight * (1.0 - TH[k]) ** 2
+            else:
+                e    = X[:, k] - p_xref[:, k]
+                cost += ca.mtimes([e.T, Q, e])
 
             # Control effort
             u_k   = U[:, k]
@@ -375,8 +471,15 @@ class MPCTracker:
                     cost        += cfg.W_obs_sigmoid * 2.0 * penetration ** 2
 
         # Terminal cost
-        e_T   = X[:, N] - p_xref[:, N]
-        cost += ca.mtimes([e_T.T, Q_T, e_T])
+        if theta_mode:
+            cost += _track_cost(X[:, N], TH[N],
+                                cfg.Q_x * cfg.Q_terminal,
+                                cfg.Q_y * cfg.Q_terminal,
+                                cfg.Q_yaw * cfg.Q_terminal)
+            cost += cfg.theta_progress_weight * (1.0 - TH[N]) ** 2
+        else:
+            e_T   = X[:, N] - p_xref[:, N]
+            cost += ca.mtimes([e_T.T, Q_T, e_T])
 
         for j in range(n_obs):
             dist_T      = ca.sqrt(
@@ -399,6 +502,12 @@ class MPCTracker:
                 cost += cfg.obs_rho * ca.sum1(ca.sum2(S))
             else:
                 cost += cfg.obs_rho * ca.sumsqr(S)
+
+        if term_eq:
+            # Penalita' l1 sullo slack terminale: per rho > max|mu*| va
+            # esattamente a zero (Thm 6.3.1), quindi il vincolo e' di fatto hard
+            # quando e' soddisfacibile e cede solo quando non lo e'.
+            cost += cfg.terminal_rho * ca.sum1(ST)
 
         opti.minimize(cost)
 
@@ -442,6 +551,29 @@ class MPCTracker:
 
         opti.subject_to(X[:, 0] == p_x0)
 
+        # ── Ascissa curvilinea: vincoli della eq. (7.5) ──────────────
+        if theta_mode:
+            opti.subject_to(TH[0] == 0.0)
+            for k in range(N):
+                # dtheta >= 0: si avanza lungo il percorso, non si torna
+                # indietro. E' cio' che rende la parametrizzazione ben posta.
+                opti.subject_to(TH[k + 1] >= TH[k])
+            # theta(N) <= 1 come DISUGUAGLIANZA, non uguaglianza: il percorso
+            # puo' essere piu' lungo di quanto il robot riesca a coprire in un
+            # orizzonte, e imporre theta(N)=1 renderebbe l'NLP inammissibile
+            # in tutti i cicli tranne l'ultimo.
+            opti.subject_to(TH[N] <= 1.0)
+
+        # ── Vincolo terminale di equilibrio (§7.2.5, eq. 3.11f) ──────
+        if term_eq:
+            # v(N) = 0 rilassato: |v_i(N)| <= s_i, s_i >= 0.
+            for i in range(3):
+                opti.subject_to(X[3 + i, N] <= ST[i])
+                opti.subject_to(-X[3 + i, N] <= ST[i])
+                opti.subject_to(ST[i] >= 0.0)
+            # (il termine di costo sullo slack e' gia' sommato prima di
+            # opti.minimize: qui restano i soli vincoli)
+
         # ── Box constraints on commands (parametric — fix #9) ────────
         for k in range(N):
             opti.subject_to(U[0, k] >= 0.0)
@@ -457,6 +589,12 @@ class MPCTracker:
             'sb':                    'yes',
             'warm_start_init_point': 'yes' if cfg.warm_start else 'no',
         }
+        # 'exact'          : Hessiana della lagrangiana da AD (Newton, §4.4.4)
+        # 'limited-memory' : L-BFGS, quasi-Newton, nessuna derivata seconda
+        # Serve al confronto della roadmap §4.1: e' il modo di misurare quanto
+        # vale l'Hessiana esatta senza scrivere un solutore.
+        if cfg.hessian != 'exact':
+            s_opts['hessian_approximation'] = cfg.hessian
         opti.solver('ipopt', p_opts, s_opts)
 
         if cfg.record_iterates:
@@ -474,6 +612,9 @@ class MPCTracker:
         self._X         = X
         self._U         = U
         self._S         = S
+        self._TH        = TH
+        self._ST        = ST
+        self._p_poly    = p_poly
         self._p_x0      = p_x0
         self._p_xref    = p_xref
         self._p_obs     = p_obs
@@ -488,6 +629,53 @@ class MPCTracker:
     # ------------------------------------------------------------------
     # Reference trajectory
     # ------------------------------------------------------------------
+
+    def _fit_path_poly(self, path_world) -> np.ndarray:
+        """
+        Rappresenta il percorso come polinomio in theta ∈ [0, 1] (§7.2.4).
+
+        Il riferimento z(theta) dev'essere LISCIO in theta, perche' theta e' una
+        variabile decisionale e IPOPT e' un metodo di tipo Newton: una spezzata
+        fra waypoint avrebbe derivata seconda discontinua a ogni nodo.
+
+        theta e' l'ascissa curvilinea NORMALIZZATA (0 all'inizio del percorso,
+        1 alla fine), cosi' il vincolo theta(N) <= 1 significa "non oltre la
+        fine del path" indipendentemente dalla sua lunghezza.
+
+        Restituisce (2, deg+1): coefficienti di x(theta) e y(theta), grado
+        crescente.
+        """
+        deg = int(self.cfg.theta_poly_deg)
+        pts = np.asarray([[float(w[0]), float(w[1])] for w in (path_world or [])],
+                         dtype=float)
+        if pts.shape[0] < 2:
+            # Percorso degenere: polinomio costante sul punto disponibile (o
+            # sull'origine). Meglio di un fit su dati insufficienti, che
+            # produrrebbe coefficienti enormi.
+            c = np.zeros((2, deg + 1))
+            if pts.shape[0] == 1:
+                c[0, 0], c[1, 0] = pts[0, 0], pts[0, 1]
+            return c
+
+        # ascissa curvilinea normalizzata dei waypoint
+        d = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        sarc = np.concatenate([[0.0], np.cumsum(d)])
+        tot = float(sarc[-1])
+        if tot < 1e-9:
+            c = np.zeros((2, deg + 1))
+            c[0, 0], c[1, 0] = pts[0, 0], pts[0, 1]
+            return c
+        t = sarc / tot
+
+        # Il grado non puo' superare il numero di punti disponibili, altrimenti
+        # il sistema e' sottodeterminato e il fit oscilla.
+        d_eff = int(min(deg, pts.shape[0] - 1))
+        c = np.zeros((2, deg + 1))
+        for axis in (0, 1):
+            # polyfit restituisce grado DECRESCENTE: si inverte.
+            coef = np.polyfit(t, pts[:, axis], d_eff)[::-1]
+            c[axis, :coef.size] = coef
+        return c
 
     def _build_reference(
         self,
@@ -614,6 +802,12 @@ class MPCTracker:
         opti.set_value(self._p_xref,    x_ref.T)    # (NX, N+1)
         opti.set_value(self._p_obs,     obs_pts.T)  # (2, n_obs)
 
+        # Coefficienti del polinomio z(theta) (§7.2.4). Il path A* cambia a ogni
+        # ciclo, quindi il fit e' rifatto qui e passato come parametro: l'NLP
+        # resta costruito una volta sola.
+        if self._p_poly is not None:
+            opti.set_value(self._p_poly, self._fit_path_poly(path_world))
+
         # Adaptive velocity limits (fix #9)
         # Il minimo evita che la riduzione adattiva porti il box a larghezza
         # nulla, rendendo l'NLP degenere. Era 0.05, cioe' PIU' ALTO di limiti
@@ -712,10 +906,21 @@ class MPCTracker:
             u_seq  = np.zeros((N, NU))
             x_pred = x_ref.copy()
 
+        n_iter, status, timings = -1, '', {}
         try:
-            n_iter = int(sol.stats().get('iter_count', -1))
+            st = sol.stats()
+            n_iter = int(st.get('iter_count', -1))
+            status = str(st.get('return_status', ''))
+            # CasADi riporta t_proc_nlp_<callback> e t_wall_nlp_<callback>.
+            # Si tiene il tempo di processo, che e' quello confrontabile fra
+            # macchine diverse, e si accorciano le chiavi.
+            timings = {k[len('t_proc_nlp_'):]: float(v)
+                       for k, v in st.items()
+                       if k.startswith('t_proc_nlp_')}
+            if 't_proc_total' in st:
+                timings['total'] = float(st['t_proc_total'])
         except Exception:
-            n_iter = -1
+            pass
 
         return MPCResult(
             success=success,
@@ -724,4 +929,6 @@ class MPCTracker:
             cost=cost_val,
             solve_time_ms=(time.perf_counter() - t0) * 1e3,
             iterations=n_iter,
+            status=status,
+            timings=timings,
         )
