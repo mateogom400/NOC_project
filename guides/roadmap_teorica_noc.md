@@ -1029,8 +1029,21 @@ seconda sblocca la terza, e la terza è il risultato più caratterizzante per l'
 | 6 | Soglia di biforcazione di x\*(ϑ) | 5.4 | `viz/bifurcation_sweep.py` | `python3 viz/bifurcation_sweep.py --scenario centred_pillar` |
 | 4 | AD contro differenze finite; Hessiana esatta contro L-BFGS | 4.1 | `MPCConfig.hessian`, `MPCResult.timings`, `viz/ad_vs_fd.py` | `python3 viz/ad_vs_fd.py` |
 | 8 | Errore di predizione modello contro impianto | 1.4 | `viz/prediction_error.py` | `python3 viz/prediction_error.py viz/bags/industrial_plant_fix` |
-| 10 | **Path following in θ** | 1.1 | `MPCConfig.path_mode`, param ROS `mpc_path_mode` | `python3 viz/formulation_compare.py` |
+| 10 | **Path following in θ** | 1.1 | `MPCConfig.path_mode`, param ROS `mpc_path_mode` | `python3 viz/formulation_compare.py
+python3 viz/horizon_sweep.py
+python3 viz/pareto_front.py --risoluzione 5
+python3 viz/solver_compare.py
+python3 viz/shooting_compare.py
+python3 viz/control_horizon.py
+python3 viz/robust_constraints.py` |
 | 12 | **Vincolo terminale di equilibrio** | 1.2 | `MPCConfig.terminal_constraint`, param ROS `mpc_terminal_constraint` | `python3 viz/formulation_compare.py` |
+| 14 | **Sweep dell'orizzonte N × dt** | 1.3 | `viz/horizon_sweep.py` | `python3 viz/horizon_sweep.py` |
+| 15 | **Fronte di Pareto** | 1.8 | `viz/pareto_front.py` | `python3 viz/pareto_front.py --risoluzione 5` |
+| 19 | **Interior point contro active set** | 2.4 | `viz/solver_compare.py` | `python3 viz/solver_compare.py` |
+| — | **Single contro multiple shooting** | 1.5 | `MPCConfig.shooting` | `python3 viz/shooting_compare.py` |
+| 17 | **Orizzonte di controllo N_c < N** | 1.6 | `MPCConfig.N_c` | `python3 viz/control_horizon.py` |
+| — | **Vincoli robusti (constraint tightening)** | 1.2 | `MPCConfig.robust_backoff` | `python3 viz/robust_constraints.py` |
+| — | Generatore dei risultati per il report | — | `viz/make_results.py` | `python3 viz/make_results.py` |
 | — | Struttura e sparsità dell'NLP | 0, 1.5 | `guides/snippets/nlp_structure.py` | `python3 guides/snippets/nlp_structure.py 10 15 25 50` |
 | — | Pannelli di visualizzazione + replay da bag | — | `viz/` | vedi [`visualizzazione_ottimizzazione.md`](visualizzazione_ottimizzazione.md) |
 
@@ -1330,37 +1343,336 @@ costruzione, e il fallback diventa una rete di sicurezza invece che il meccanism
 
 ---
 
-### 10.10 Da fare, in ordine di priorità
+### 10.10 Orizzonte: allungarlo oltre 5 s **peggiora**, e il deployato è dominato
 
-Il criterio: prima ciò che ha l'infrastruttura già pronta, poi ciò che cambia la formulazione,
-infine il pezzo grosso.
+`viz/horizon_sweep.py` valuta in anello chiuso una griglia **N × dt**, su scenari con
+ostacoli, tenendo costante la durata della missione **in secondi** — non in passi: qui `dt` è
+anche il periodo di controllo e il passo dell'impianto, quindi confrontare a parità di passi
+darebbe ai `dt` piccoli una missione più corta.
 
-Tutte le voci a infrastruttura pronta (6, 4, 8) e le due riformulazioni ⭐ (10, 12) sono
-**fatte**. Quello che resta è elencato qui sotto.
+I due parametri non sono intercambiabili:
 
-**Riformulazioni da validare**
+```
+orizzonte temporale   T = N·dt        quanto lontano l'MPC vede
+numero di variabili   ~ N             quanto costa risolvere
+errore di troncamento ~ dt^p          quanto è fedele la predizione
+```
 
-| # | Voce | §guida | Nota |
-|---|---|---|---|
-| 10 | Path following in θ (elimina `v_ref`) | 1.1 | ⭐ la formulazione che il corso insegna per esattamente questo problema |
-| 12 | Vincolo terminale di equilibrio | 1.2 | ⭐ il materiale sperimentale esiste già (il latch, §1.2) |
-| 14 | Sweep dell'orizzonte N | 1.3 | l'orizzonte copre 0.60 m: va giustificato o cambiato |
-| 15 | Fronte di Pareto | 1.8 | sinergia con il 10, che introduce già tre obiettivi pesati |
+Griglia 5 × 4 su `narrow_gap` e `u_trap`, budget di ciclo 125 ms:
 
-**Infine**
+| fascia | tempo al goal | clearance minima |
+|---|---|---|
+| orizzonte **< 6 s** | 11.0 s | 0.228 m |
+| orizzonte **≥ 6 s** | **22.7 s** | **0.165 m** |
 
-| # | Voce | §guida | Nota |
-|---|---|---|---|
-| 18 | SQP + Gauss-Newton scritti a mano contro IPOPT | 2.3 | il più corposo e il più caratterizzante; ora ha i μ\* di riferimento dal punto 2 |
-| 19 | Active-set contro interior-point | 2.4 | da rifare **prima e dopo** il punto 11, vedi §10.4 |
+**Allungare l'orizzonte oltre ~5 s peggiora entrambe le metriche.** È il risultato
+controintuitivo dello sweep, e ha una spiegazione precisa: il riferimento si estende su un
+percorso che A\* **ripianificherà comunque**, e l'MPC si impegna a inseguire un obiettivo
+destinato a cambiare. I casi peggiori sono localizzati e severi — N=15/dt=0.4 scende a
+**0.029 m** di clearance (quasi collisione), e N=25/dt=0.3 non raggiunge il goal su uno
+scenario.
 
-**Non ancora toccato e da decidere**: la scrittura formale dell'FHOCP (§6.1, punto 1) — è mezza
-pagina ma va all'inizio del report, perché senza di essa nessuna delle altre sezioni ha un
-referente esplicito.
+Sul costo, invece, comanda **N e non dt**: solo N=40/dt=0.1 sfora il budget (p95 141 ms).
+
+**La configurazione deployata (N=15, dt=0.2) è dominata.** L'insieme non dominato su
+(tempo al goal, clearance, p95):
+
+| N | dt | T [s] | t al goal [s] | clearance [m] | p95 [ms] |
+|---|---|---|---|---|---|
+| 5 | 0.1 | 0.5 | 10.8 | 0.225 | 24.0 |
+| 5 | 0.3 | 1.5 | 10.9 | 0.240 | 22.3 |
+| **5** | **0.2** | **1.0** | **11.1** | **0.225** | **18.5** |
+| 25 | 0.4 | 10.0 | 21.2 | 0.267 | 60.2 |
+| 40 | 0.4 | 16.0 | 21.8 | 0.276 | 77.5 |
+
+N=5/dt=0.2 dà **lo stesso tempo e la stessa clearance del deployato a metà del costo**
+(18.5 ms contro 39.7 ms di p95).
+
+> **Cautela prima di cambiare la configurazione.** Questi sono scenari sintetici con ostacoli
+> statici e A\* che ripianifica spesso. Un orizzonte di 1 s (0.2–0.3 m) è brevissimo, e la sua
+> tenuta dipende dal fatto che l'evitamento lo faccia A\*: con ostacoli dinamici, o con A\*
+> più lento, il margine sparirebbe. Il risultato va **validato su missioni reali** prima di
+> toccare il profilo deployato.
 
 ---
 
-### 10.11 Come verificare che tutto giri ancora
+### 10.11 Fronte di Pareto: la taratura attuale è già non dominata
+
+`viz/pareto_front.py` segue la procedura del §7.4 alla lettera: normalizzazione (I),
+campionamento del simplesso **vertici inclusi** (II), punti non dominati, punto Utopico e
+scelta come più vicino all'Utopico in norma 2 (III), più curva di Pareto (Fig. 7.9) e spider
+chart (Fig. 7.10).
+
+I tre obiettivi sono quelli che la eq. (7.5) introduce da sé: **accuratezza** (pesi Q),
+**sforzo** (pesi R), **avanzamento** (peso su (1−θ)²). I pesi sono scalati per 3, così il
+baricentro (⅓,⅓,⅓) riproduce esattamente la taratura di partenza.
+
+> **Punto metodologico**: le *metriche* con cui si valutano le soluzioni usano pesi **fissi**,
+> non quelli campionati. Altrimenti ogni punto del simplesso verrebbe giudicato con un metro
+> diverso e il confronto non significherebbe nulla.
+
+Su 21 punti del simplesso e due scenari, tutte le missioni riuscite:
+
+| escursione relativa sul simplesso | |
+|---|---|
+| accuratezza | **30.5 %** |
+| sforzo | 7.1 % |
+| tempo | 3.7 % |
+
+**Solo l'accuratezza risponde davvero ai pesi.** Tempo e sforzo sono quasi fissi, e la ragione
+è nel §10.8: in modo θ il robot satura `vx_max` quasi sempre, quindi la durata è decisa dalla
+cinematica e non dalla taratura. Il compromesso reale è quindi mite.
+
+Il fronte risulta **convesso**, quindi la somma pesata lo recupera per intero — la cautela del
+§7.4 non si applica qui, ma andava verificata invece che assunta.
+
+**Il risultato utile è negativo**: il baricentro, cioè la taratura già in uso, è **non
+dominato** e a pari distanza dall'Utopico rispetto al punto scelto dalla procedura
+(0.559 contro 0.559). La taratura dei pesi non è il collo di bottiglia del sistema — a
+differenza dell'orizzonte, che il §10.10 mostra essere mal scelto.
+
+---
+
+### 10.12 Interior point contro active set: il punto interno vince, ma non come dice la regola
+
+`viz/solver_compare.py` sfrutta una proprietà che questo progetto ha e pochi altri hanno: la
+formulazione degli ostacoli è **commutabile**, quindi lo stesso identico sistema può essere
+messo nei due regimi opposti rispetto alla regola pratica del §6.2.2.
+
+| regime | disuguaglianze | IPOPT (punto interno) | SQP + qpOASES (active set) | vince |
+|---|---|---|---|---|
+| `penalty` — ostacoli nel costo | **60** | 54 ms, 15 iter | 166 ms, 6 iter | punto interno (3.1×) |
+| `l1` — ostacoli come vincoli | **300** | 129 ms, 21 iter | 6391 ms, 7 iter | punto interno (**49.7×**) |
+
+**La regola del corso non si verifica**: l'active set non vince nemmeno con sole 60
+disuguaglianze. Ma la *direzione* è confermata — il margine del punto interno passa da 3.1× a
+49.7× quando le disuguaglianze quintuplicano. La soglia di pareggio, se esiste, sta sotto il
+nostro regime più piccolo.
+
+**Due cautele senza le quali il numero sarebbe fuorviante:**
+
+1. **Il vantaggio vero dell'active set in MPC è il warm start fra solve consecutivi**, non il
+   singolo solve a freddo: fra un ciclo e il successivo l'insieme attivo cambia di poche righe
+   e qpOASES riparte dalla fattorizzazione precedente — è la *online active set strategy* per
+   cui qpOASES è stato scritto. Qui si parte **a freddo apposta**, per non favorire nessuno
+   dei due, e così si toglie all'active set proprio ciò che lo rende competitivo.
+2. La regola del corso è pratica, e non contempla la **non convessità**. Il nostro problema è
+   non convesso (§5.2).
+
+**Un risultato che è venuto gratis**: con l'Hessiana esatta della lagrangiana, CasADi segnala
+ripetutamente `Indefinite Hessian detected`. È atteso e istruttivo — se il problema non è
+convesso, il QP interno dell'SQP può non esserlo, e un QP non convesso non ha soluzione unica.
+È **esattamente la ragione** per cui il §6.3.2 raccomanda Gauss-Newton per l'SQP:
+`H = 2·∇Fᵀ W ∇F` è semidefinita positiva per costruzione, e il QP torna convesso. La teoria
+prevede il problema e ne fornisce il rimedio; qui si vede accadere.
+
+> **Nota metodologica.** Alla prima esecuzione l'SQP "convergeva" in **1 iterazione** a
+> `f = 21308` contro `17414` di IPOPT: si fermava prima, in un punto peggiore, e confrontare i
+> tempi di due solve che finiscono in **minimi diversi** non significa nulla. Servono
+> tolleranze a 1e-10 perché raggiunga davvero lo stesso minimo — e solo allora il confronto è
+> un confronto. Lo strumento ora verifica l'uguaglianza dei minimi e rifiuta di dichiarare un
+> vincitore quando non c'è.
+
+---
+
+### 10.13 Single contro multiple shooting: il vantaggio del multiple cresce con N
+
+`MPCConfig.shooting` ∈ {`multiple`, `single`}. In single shooting X è **eliminata per
+sostituzione ricorsiva** a partire da x₀: le variabili sono i soli ingressi e non c'è alcun
+vincolo di dinamica. La mappa di transizione è scritta **una volta sola** e usata da entrambe
+le parametrizzazioni — scriverla due volte significherebbe confrontare due modelli diversi
+credendo di confrontare due parametrizzazioni.
+
+Scenario `centred_pillar`, dt = 0.2:
+
+| N | variabili M / S | vincoli M / S | densità jac M / S | tempo M / S [ms] | vince |
+|---|---|---|---|---|---|
+| 5 | 51 / 15 | 56 / 20 | 4.59 % / 6.67 % | 99 / 74 | single |
+| 10 | 96 / 30 | 106 / 40 | 2.52 % / 3.33 % | 132 / 154 | multiple |
+| 25 | 231 / 75 | 256 / 100 | 1.07 % / 1.33 % | 395 / 646 | multiple |
+| 60 | 546 / 180 | 606 / 240 | 0.46 % / 0.56 % | 882 / 3162 | **multiple (2.9×)** |
+
+**Il single è competitivo solo a N ≤ 5**; da lì in poi vince il multiple, e il margine cresce
+monotonicamente fino a 2.9× a N = 60. È la previsione del §7.2.2 confermata: le variabili in
+più sono ripagate dalla sparsità, e il vantaggio cresce con l'orizzonte.
+
+Due cose che vanno dette:
+
+- **A N = 25 le due parametrizzazioni convergono a minimi diversi** (13033.3 contro 13011.7,
+  con il *single* migliore). Non è un errore: il problema non è convesso (§5.2), e due
+  parametrizzazioni hanno cammini di ottimizzazione diversi, quindi possono cadere in bacini
+  diversi. Rende il confronto dei tempi meno netto di quanto la tabella suggerisca.
+- **Il tempo non è l'unico criterio.** Il single integra il modello in **anello aperto** su
+  tutto l'orizzonte: l'errore si compone passo dopo passo e il problema si mal-condiziona con
+  N e con l'instabilità del sistema. Qui il modello è cinematico e stabile, quindi il difetto
+  non si manifesta — su un modello dinamico si manifesterebbe, ed è la ragione per cui il
+  multiple shooting è lo standard in NMPC.
+
+> Questo corregge un'affermazione non sostenuta che era finita in
+> `viz/out/tex/metrics_body.tex`: che una formulazione single-shooting *"would be smaller and
+> dense, and would lose exactly that property"*. Smaller e dense sono ora **misurati**; il
+> resto era una previsione, e a N piccoli è addirittura falsa sul tempo.
+
+---
+
+### 10.14 Orizzonte di controllo: il degrado viene dalla predizione, non dai gradi di libertà
+
+`MPCConfig.N_c` rende liberi i soli primi N_c ingressi; oltre, u resta costante all'ultimo
+valore libero. Serve a rispondere a una domanda diagnostica che il §10.10 lasciava aperta:
+là *"orizzonte"* era una cosa sola, perché N governa insieme **quanto lontano l'MPC guarda** e
+**quanti gradi di libertà ha**.
+
+| N | N_c | variabili | t al goal [s] | clearance [m] | p95 [ms] |
+|---|---|---|---|---|---|
+| 5 | 5 | 51 | 11.1 | 0.225 | 20.6 |
+| 15 | 15 | 141 | 11.1 | 0.225 | 49.8 |
+| **15** | **1** | **99** | **11.1** | **0.225** | **16.3** |
+| 40 | 40 | 366 | 25.3 | 0.112 | 85.7 |
+| 40 | 10 | 276 | 22.2 | 0.131 | 53.9 |
+| 40 | 1 | 249 | 22.2 | 0.127 | 26.5 |
+
+**Risposta: viene dalla predizione.** A N = 40, ridurre i gradi di libertà da 40 a 1 non
+recupera il comportamento dell'orizzonte corto — resta a 22.2 s contro gli 11.1 s di N = 5.
+Il degrado è dovuto al fatto che **il riferimento si estende su un percorso che A\*
+ripianificherà comunque**, non a un eccesso di variabili.
+
+La conseguenza è concreta: **non si può comprare a poco prezzo un orizzonte di predizione
+lungo**. Se servisse per gli ingredienti terminali del §7.2.5, costerebbe prestazione, non
+solo calcolo.
+
+**Ma c'è un secondo risultato, e in pratica vale di più**: dove l'orizzonte è quello giusto,
+`N_c` è calcolo gratis. A N = 15, `N_c = 1` dà tempo e clearance **identici** a `N_c = 15`
+con p95 di 16.3 ms invece di 49.8 — **3.1× più veloce**. È il vantaggio della
+parametrizzazione dell'ingresso (§7.2.3): disaccoppiare i gradi di libertà dall'orizzonte non
+costa nulla in prestazione.
+
+> **Una trappola risolta implementandolo.** Imporre i box su tutti gli N passi quando oltre
+> N_c l'ingresso è *la stessa espressione ripetuta* genera righe **duplicate**, con gradienti
+> identici: se attive violano LICQ (Def. 6.1.5) e rendono i moltiplicatori non unici — cioè
+> romperebbero proprio l'analisi della §2.1. I box vanno imposti sulle sole colonne libere.
+> Verificato: con la correzione LICQ e complementarità stretta valgono per ogni N_c.
+
+---
+
+### 10.15 Perché **non** usiamo il move blocking
+
+Il move blocking (§7.2.3) tiene l'ingresso costante su blocchi di passi crescenti — per
+esempio 1,1,1,2,2,4,4 — riducendo le variabili senza accorciare l'orizzonte. È la tecnica
+standard per recuperare budget di calcolo, e qui **non la usiamo**. Le ragioni sono tre, tutte
+misurate:
+
+1. **L'orizzonte utile è già corto.** Il §10.10 mostra che N = 5 è Pareto-non-dominato e che
+   oltre ~5 s la prestazione *peggiora*. Comprimere cinque variabili in tre blocchi non
+   cambia nulla di misurabile.
+
+2. **L'orizzonte di controllo fa già lo stesso lavoro, meglio.** `N_c` (§10.14) è un caso
+   particolare degno di move blocking — un blocco libero seguito da uno lungo — e dà già
+   **3.1×** di risparmio a prestazione identica. Un blocking più fine aggiungerebbe complessità
+   per un guadagno residuo piccolo, e introdurrebbe la stessa trappola LICQ sui box duplicati,
+   moltiplicata per il numero di blocchi.
+
+3. **Il calcolo non è il vincolo attivo.** Con la configurazione deployata il p95 è ~50 ms
+   contro un budget di 125 ms, e con `N_c = 1` scende a 16 ms. Ottimizzare una risorsa che
+   avanza non è una priorità: il vincolo che morde è la **qualità della predizione** (§10.7,
+   divergenza di 0.124 m), non il tempo di solve.
+
+La tecnica resta però quella giusta **se** il progetto cambiasse premesse — orizzonte lungo
+richiesto da un vincolo terminale rigoroso (voce 20), oppure un modello dinamico più costoso
+per passo. Va citata come scelta consapevole, non come omissione.
+
+---
+
+### 10.16 Vincoli robusti: il tubo si misura, non si indovina
+
+`MPCConfig.robust_backoff` irrigidisce il vincolo di ostacolo di un margine crescente:
+
+```
+‖p_k − o_j‖ ≥ d_safe + β(k) − s_jk
+```
+
+Il vincolo è imposto sulla traiettoria **predetta**, che il §10.7 misura divergere da quella
+vera. β(k) è il margine che copre quella divergenza — e la particolarità di questo progetto è
+che **non va indovinato**: `viz/robust_constraints.py` lo ricava dal quantile dell'errore di
+predizione registrato nelle bag. È un tubo derivato dai dati, non da un'ipotesi sul disturbo.
+
+β(k) al quantile 95 % su `industrial_plant_fix`:
+
+| k | orizzonte [s] | β(k) [m] |
+|---|---|---|
+| 0 | 0.00 | 0.0000 |
+| 3 | 0.60 | 0.0476 |
+| 6 | 1.20 | 0.1260 |
+| 9 | 1.80 | 0.2026 |
+| 15 | 3.00 | **0.2907** |
+
+Tre proprietà per costruzione: **β(0) = 0** esatto — a k = 0 lo stato è imposto come vincolo
+di uguaglianza, quindi il vincolo non si irrigidisce dove non serve; β è **monotona**, come
+l'incertezza; e il vincolo resta **soft**, quindi un tubo troppo largo fa crescere il costo ma
+non rende l'NLP inammissibile.
+
+*(All'offset a k = 0 — i 2.4 cm del §10.7 — viene sottratto: non è errore di modello ma
+disallineamento temporale, e includerlo gonfierebbe il tubo di una costante che non ha nulla a
+che vedere con l'incertezza.)*
+
+**Effetto misurato sulla traiettoria predetta:**
+
+| scenario | d_safe | clearance senza | con β | Δ | slack | esito |
+|---|---|---|---|---|---|---|
+| narrow_gap | 0.40 | 0.7500 | 0.7500 | +0.0000 | 0 / 0 | vincolo inattivo |
+| **narrow_gap** | **0.70** | **0.7500** | **0.9907** | **+0.2406** | **0 / 0** | **efficace** |
+| narrow_gap | 1.00 | 1.0000 | 1.2816 | +0.2816 | 0 / 0.009 | inammissibile |
+| u_trap | 0.40–1.00 | 1.3417 | 1.3417 | +0.0000 | 0 / 0 | vincolo inattivo |
+
+Il caso centrale è la dimostrazione: **+0.24 m di clearance predetta con slack esattamente
+nullo** — il margine è *rispettato*, non violato e pagato. Gli altri due esiti sono
+altrettanto informativi: quando `d_safe + β` sta sotto la distanza già tenuta il vincolo è
+inattivo e non deve fare nulla; quando chiede più di quanto U_Σ consenta, la penalità ℓ¹ cede
+invece di rendere l'NLP inammissibile — che è precisamente il motivo per cui era stata scelta
+(§10.4).
+
+**Sul run reale il tightening è inerte, e la ragione è istruttiva.** Sui cicli più stretti del
+magazzino il robot sta a 0.615 m dagli ostacoli e non riesce ad allontanarsi: alzando `d_safe`
+lo slack cresce (0.031 → 0.065 a 0.65 m) ma la traiettoria non si sposta. Il vincolo attivo non
+è la soglia, è l'**insieme ammissibile degli ingressi**: con `vx ≥ 0` e `vy_max = 0.02` il robot
+può solo avanzare lungo la propria direzione, non arretrare lateralmente. È lo stesso limite
+misurato nel §10.4, e qui si manifesta di nuovo — il che è una conferma incrociata, non una
+ripetizione.
+
+> **Limite della misura, da dichiarare.** L'effetto **non è misurabile in anello chiuso** in
+> questo simulatore: la clearance percorsa risulta *identica* per `obstacle_mode` `penalty` e
+> `l1`, per ogni `d_safe` e ogni ρ. Il motivo è che `closed_loop` prende un setpoint a distanza
+> di lookahead lungo la traiettoria predetta e lo insegue con un controllore proporzionale, il
+> che cancella le differenze fini fra le soluzioni dell'MPC. Il constraint tightening garantisce
+> il margine **nel piano**, ed è lì che va verificato — non è un limite della tecnica ma del
+> banco di prova.
+
+---
+
+### 10.17 Da fare, in ordine di priorità
+
+Il Capitolo 7 è ora coperto per intero, e con esso le voci del Capitolo 6 che gli servivano.
+Quello che resta è di due tipi.
+
+**Da scrivere, non da implementare**
+
+| voce | §guida | Nota |
+|---|---|---|
+| Scrittura formale dell'FHOCP in notazione delle dispense | 6.1 | mezza pagina, ma va all'inizio del report: senza, nessuna delle altre sezioni ha un referente esplicito |
+| Decidere se adottare N = 5 / dt = 0.2 | 1.3 | il §10.10 mostra che domina la configurazione attuale; richiede validazione su missioni reali, non modifiche al codice |
+
+**Il pezzo grosso, se ci sarà tempo**
+
+| # | Voce | §guida | Nota |
+|---|---|---|---|
+| 18 | SQP + Gauss-Newton scritti a mano contro IPOPT | 2.3 | il più caratterizzante; ha già i μ\* di riferimento (§10.3) e il confronto con qpOASES (§10.12). Il §10.12 mostra anche *perché* serve Gauss-Newton: con l'Hessiana esatta il QP interno è indefinito |
+| 20 | Insieme terminale come sottolivello di Lyapunov (DARE) | 1.2 | versione rigorosa del §10.9. Attenzione: il §10.14 mostra che un orizzonte di predizione lungo — che il vincolo terminale rigoroso richiederebbe — **costa prestazione**, non solo calcolo |
+| 16 | Omotopia su `obs_alpha` | 1.7, 2.5 | continuazione del §7.1.1; l'infrastruttura c'è (`decision_plane.py --set`) |
+
+**Esplicitamente escluso**: il move blocking, per le ragioni misurate del §10.15.
+
+---
+
+### 10.18 Come verificare che tutto giri ancora
 
 ```bash
 source /opt/ros/humble/setup.bash && source install/setup.bash

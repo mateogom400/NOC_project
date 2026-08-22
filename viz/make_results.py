@@ -6,6 +6,9 @@ Esegue tutte le misure della roadmap e scrive:
 
     viz/out/results.json   tutti i numeri, in forma strutturata
     viz/out/results.md     lo stesso, in tabelle pronte da leggere
+    viz/out/tex/           lo stesso, in LaTeX per il report (viz/results_tex.py):
+                           metrics_macros.tex, metrics_body.tex,
+                           metrics_standalone.tex
 
 Perche' esiste: i numeri di un report NON vanno copiati a mano dal terminale.
 Appena si ritocca un parametro divergono dal codice in silenzio — e' gia'
@@ -560,7 +563,24 @@ def main() -> int:
         json.dump(res, fh, indent=2, ensure_ascii=False, default=float)
     with open(pm, "w") as fh:
         fh.write(to_markdown(res))
-    print(f"\nsalvati:\n  {pj}\n  {pm}")
+    salvati = [pj, pm]
+
+    # LaTeX: stesse misure, forma citabile dal report. Se la generazione fallisce
+    # NON si perde la campagna (json e md sono gia' su disco): si stampa l'errore
+    # e si continua, perche' rifare i solve costa e rifare il .tex no.
+    try:
+        import results_tex
+        salvati += results_tex.write_all(
+            res, os.path.join(args.out, "tex"),
+            results_tex.load_extra(pj))
+    except Exception as exc:
+        print(f"\nLaTeX NON generato: {exc}")
+        print("  (i numeri sono comunque in results.json; "
+              "riprovare con  python3 viz/results_tex.py)")
+
+    print("\nsalvati:")
+    for q in salvati:
+        print(f"  {q}")
     print(f"durata {res['meta']['durata_s']:.0f} s")
     if res["meta"]["git_albero_sporco"]:
         print("\nATTENZIONE: albero di lavoro sporco — questi numeri non sono")

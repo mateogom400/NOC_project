@@ -114,6 +114,37 @@ class MPCConfig:
     # riguarda solo px/py, dove il termine R(yaw)*v va integrato numericamente.
     integrator: str = 'euler'
 
+    # Constraint tightening robusto (dispense §7.2.5).
+    # Sequenza beta(k), k = 0..N, sommata alla distanza di sicurezza:
+    #     ||p_k - o_j|| >= d_safe + beta(k) - s_jk
+    # Il vincolo e' imposto sulla traiettoria PREDETTA, che diverge da quella
+    # vera; beta(k) e' il margine che copre quella divergenza. Va MISURATO
+    # (viz/robust_constraints.py lo ricava dal quantile dell'errore di
+    # predizione registrato nelle bag), non scelto a occhio.
+    # None = nessun irrigidimento. Ha effetto solo con obstacle_mode l1/l2,
+    # dove l'ostacolo e' un vincolo vero e non una penalita'.
+    robust_backoff: Optional[tuple] = None
+
+    # Orizzonte di CONTROLLO (dispense §7.2.3 e §7.2.5).
+    #   None (default) : N_c = N, un ingresso libero per passo di predizione.
+    #   intero < N     : gli ingressi sono liberi solo per i primi N_c passi;
+    #                    oltre, u resta COSTANTE all'ultimo valore libero.
+    # Disaccoppia il numero di gradi di liberta' dall'orizzonte di predizione:
+    # si puo' guardare lontano (utile agli ingredienti terminali) pagando poche
+    # variabili. Vedi viz/control_horizon.py.
+    N_c: Optional[int] = None
+
+    # Parametrizzazione della traiettoria (dispense §7.2.2, eq. 7.3 vs 7.4)
+    #   'multiple' : X e U sono ENTRAMBE variabili decisionali, la dinamica e'
+    #                imposta come vincolo di uguaglianza. Piu' variabili, ma
+    #                struttura SPARSA e il modello mai integrato in anello
+    #                aperto per piu' di un passo.
+    #   'single'   : X eliminata per sostituzione ricorsiva a partire da x0.
+    #                Meno variabili e nessun vincolo di dinamica, ma Jacobiana
+    #                DENSA e integrazione in anello aperto su tutto l'orizzonte.
+    # Vedi viz/shooting_compare.py.
+    shooting: str = 'multiple'
+
     # Hessiana usata da IPOPT: 'exact' (da AD) oppure 'limited-memory' (L-BFGS).
     # Vedi guides/roadmap_teorica_noc.md §4.1 e viz/ad_vs_fd.py.
     hessian: str = 'exact'
@@ -230,6 +261,7 @@ class MPCTracker:
         self._opti:   Optional[ca.Opti] = None
         self._X:      Optional[ca.MX]   = None
         self._U:      Optional[ca.MX]   = None
+        self._U_free: Optional[ca.MX]   = None   # ingressi liberi (N_c colonne)
         self._S:      Optional[ca.MX]   = None   # slack ostacoli (solo modi l1/l2)
         self._TH:     Optional[ca.MX]   = None   # ascissa curvilinea (solo path_mode='theta')
         self._ST:     Optional[ca.MX]   = None   # slack terminale (solo terminal_constraint)
@@ -343,8 +375,37 @@ class MPCTracker:
         lag_w = float(1.0 - np.exp(-dt / max(cfg.tau_w, 1e-6)))
 
         opti   = ca.Opti()
-        X      = opti.variable(NX, N + 1)
-        U      = opti.variable(NU, N)
+        # In multiple shooting X va dichiarata PRIMA di U: Opti impila le
+        # variabili nell'ordine di creazione, e il layout [X; U] di opti.x e'
+        # assunto da viz/test_fidelity.py e viz/decision_plane.py. In single
+        # shooting X non e' una variabile, quindi l'ordine non si pone.
+        # beta(k) del constraint tightening: 0 se non richiesto.
+        _bo = cfg.robust_backoff
+        if _bo is not None and len(_bo) not in (N, N + 1):
+            raise ValueError(
+                f"robust_backoff deve avere N o N+1 elementi (N={N}), "
+                f"ricevuti {len(_bo)}")
+
+        def _beta(k):
+            if _bo is None:
+                return 0.0
+            return float(_bo[min(k, len(_bo) - 1)])
+
+        single = (cfg.shooting == 'single')
+        if cfg.shooting not in ('single', 'multiple'):
+            raise ValueError(f"shooting sconosciuto: {cfg.shooting!r} "
+                             "(attesi 'multiple' o 'single')")
+        X = opti.variable(NX, N + 1) if not single else None
+
+        # Orizzonte di controllo: N_c colonne LIBERE, poi l'ultima ripetuta.
+        # U_free e' cio' che il solutore ottimizza; U e' la sequenza vista dalla
+        # dinamica e dai vincoli, ed e' una sua funzione lineare.
+        n_c = int(cfg.N_c) if cfg.N_c is not None else N
+        if not (1 <= n_c <= N):
+            raise ValueError(f"N_c deve stare in [1, N]: ricevuto {cfg.N_c} con N={N}")
+        U_free = opti.variable(NU, n_c)
+        U = (U_free if n_c == N
+             else ca.horzcat(U_free, ca.repmat(U_free[:, -1], 1, N - n_c)))
         p_x0   = opti.parameter(NX)
         p_xref = opti.parameter(NX, N + 1)
         p_obs  = opti.parameter(2, n_obs)
@@ -353,6 +414,40 @@ class MPCTracker:
         p_vx_max    = opti.parameter()
         p_vy_max    = opti.parameter()
         p_omega_max = opti.parameter()
+
+        # ── Mappa di transizione, definita UNA volta ─────────────────
+        # Single e multiple shooting devono usare esattamente la stessa
+        # dinamica: scriverla due volte significherebbe confrontare due modelli
+        # diversi credendo di confrontare due parametrizzazioni.
+        def _passo(xk, uk):
+            px_k, py_k, yaw_k = xk[0], xk[1], xk[2]
+            vx_k, vy_k, wz_k = xk[3], xk[4], xk[5]
+            vx_next = (1.0 - lag_v) * vx_k + lag_v * uk[0]
+            vy_next = (1.0 - lag_w) * vy_k + lag_w * uk[1]
+            wz_next = (1.0 - lag_w) * wz_k + lag_w * uk[2]
+            if cfg.integrator == 'midpoint':
+                yaw_eval = yaw_k + 0.5 * wz_next * dt
+            elif cfg.integrator == 'euler':
+                yaw_eval = yaw_k
+            else:
+                raise ValueError(
+                    f"integrator sconosciuto: {cfg.integrator!r} "
+                    "(attesi 'euler' o 'midpoint')")
+            c_, s_ = ca.cos(yaw_eval), ca.sin(yaw_eval)
+            return ca.vertcat(
+                px_k + (vx_next * c_ - vy_next * s_) * dt,
+                py_k + (vx_next * s_ + vy_next * c_) * dt,
+                yaw_k + wz_next * dt,
+                vx_next, vy_next, wz_next)
+
+        if single:
+            # eq. (7.3): la traiettoria e' funzione dei soli ingressi.
+            # Dichiararla comunque come variabile lascerebbe nell'NLP 6*(N+1)
+            # incognite libere che non compaiono in nessun vincolo.
+            _xs = [p_x0]
+            for _k in range(N):
+                _xs.append(_passo(_xs[-1], U[:, _k]))
+            X = ca.horzcat(*_xs)
 
         # Slack sul vincolo di ostacolo (§6.3.3). Uno per coppia (passo, ostacolo).
         # Nella modalita' 'penalty' non esiste: l'NLP resta identico a prima.
@@ -462,7 +557,8 @@ class MPCTracker:
                     # inammissibile ogni volta che il robot si trova gia' entro
                     # d_safe da un ostacolo — cioe' proprio quando servirebbe.
                     if k >= 1:
-                        opti.subject_to(dist_k >= cfg.obs_d_safe - S[j, k - 1])
+                        opti.subject_to(
+                            dist_k >= cfg.obs_d_safe + _beta(k) - S[j, k - 1])
                         opti.subject_to(S[j, k - 1] >= 0.0)
                 else:
                     s_k         = cfg.obs_alpha * (dist_k - cfg.obs_r)
@@ -487,7 +583,8 @@ class MPCTracker:
                 (X[1, N] - p_obs[1, j]) ** 2 + 1e-6
             )
             if hard_obs:
-                opti.subject_to(dist_T >= cfg.obs_d_safe - S[j, N - 1])
+                opti.subject_to(
+                    dist_T >= cfg.obs_d_safe + _beta(N) - S[j, N - 1])
                 opti.subject_to(S[j, N - 1] >= 0.0)
             else:
                 s_T          = cfg.obs_alpha * (dist_T - cfg.obs_r)
@@ -511,45 +608,15 @@ class MPCTracker:
 
         opti.minimize(cost)
 
-        # ── Dynamics — 6-D first-order lag (fixes #3/#4) ────────────
-        for k in range(N):
-            px_k  = X[0, k];  py_k  = X[1, k];  yaw_k = X[2, k]
-            vx_k  = X[3, k];  vy_k  = X[4, k];  wz_k  = X[5, k]
-            vx_cmd = U[0, k]; vy_cmd = U[1, k]; wz_cmd = U[2, k]
-
-            # Actuator lag (exact ZOH discrete first-order response)
-            vx_next  = (1.0 - lag_v) * vx_k  + lag_v  * vx_cmd
-            vy_next  = (1.0 - lag_w) * vy_k  + lag_w  * vy_cmd
-            wz_next  = (1.0 - lag_w) * wz_k  + lag_w  * wz_cmd
-
-            # Position update with post-lag velocity (more accurate than commanded).
-            # L'orientamento a cui si valuta R(yaw) decide l'ordine dello schema:
-            # a inizio intervallo e' Euler in avanti (eq. 2.9), a meta' intervallo
-            # e' la regola del punto medio (eq. 2.10). Il costo aggiuntivo e' una
-            # somma: wz_next serve comunque per yaw_next.
-            if cfg.integrator == 'midpoint':
-                yaw_eval = yaw_k + 0.5 * wz_next * dt
-            elif cfg.integrator == 'euler':
-                yaw_eval = yaw_k
-            else:
-                raise ValueError(
-                    f"integrator sconosciuto: {cfg.integrator!r} "
-                    "(attesi 'euler' o 'midpoint')"
-                )
-            cos_yaw  = ca.cos(yaw_eval)
-            sin_yaw  = ca.sin(yaw_eval)
-            px_next  = px_k  + (vx_next * cos_yaw - vy_next * sin_yaw) * dt
-            py_next  = py_k  + (vx_next * sin_yaw + vy_next * cos_yaw) * dt
-            yaw_next = yaw_k + wz_next * dt
-
-            opti.subject_to(X[0, k + 1] == px_next)
-            opti.subject_to(X[1, k + 1] == py_next)
-            opti.subject_to(X[2, k + 1] == yaw_next)
-            opti.subject_to(X[3, k + 1] == vx_next)
-            opti.subject_to(X[4, k + 1] == vy_next)
-            opti.subject_to(X[5, k + 1] == wz_next)
-
-        opti.subject_to(X[:, 0] == p_x0)
+        # ── Dinamica ────────────────────────────────────────────────
+        # In multiple shooting (eq. 7.4) la dinamica e' un VINCOLO di
+        # uguaglianza per ogni passo, piu' la condizione iniziale.
+        # In single shooting (eq. 7.3) non serve nulla: X e' gia' costruita per
+        # sostituzione, quindi la dinamica e' soddisfatta per costruzione.
+        if not single:
+            for k in range(N):
+                opti.subject_to(X[:, k + 1] == _passo(X[:, k], U[:, k]))
+            opti.subject_to(X[:, 0] == p_x0)
 
         # ── Ascissa curvilinea: vincoli della eq. (7.5) ──────────────
         if theta_mode:
@@ -575,11 +642,16 @@ class MPCTracker:
             # opti.minimize: qui restano i soli vincoli)
 
         # ── Box constraints on commands (parametric — fix #9) ────────
-        for k in range(N):
-            opti.subject_to(U[0, k] >= 0.0)
-            opti.subject_to(U[0, k] <= p_vx_max)
-            opti.subject_to(opti.bounded(-p_vy_max,    U[1, k],  p_vy_max))
-            opti.subject_to(opti.bounded(-p_omega_max, U[2, k],  p_omega_max))
+        # Si vincolano le sole colonne LIBERE: oltre N_c l'ingresso e' la stessa
+        # espressione ripetuta, quindi imporre di nuovo il box darebbe righe
+        # DUPLICATE, con gradienti identici. Se attive violerebbero LICQ
+        # (Def. 6.1.5) e renderebbero i moltiplicatori non unici — cioe'
+        # romperebbero proprio l'analisi della §2.1.
+        for k in range(n_c):
+            opti.subject_to(U_free[0, k] >= 0.0)
+            opti.subject_to(U_free[0, k] <= p_vx_max)
+            opti.subject_to(opti.bounded(-p_vy_max,    U_free[1, k],  p_vy_max))
+            opti.subject_to(opti.bounded(-p_omega_max, U_free[2, k],  p_omega_max))
 
         # ── Solver ────────────────────────────────────────────────────
         p_opts = {'expand': True, 'print_time': False}
@@ -611,6 +683,7 @@ class MPCTracker:
         self._opti      = opti
         self._X         = X
         self._U         = U
+        self._U_free    = U_free
         self._S         = S
         self._TH        = TH
         self._ST        = ST
@@ -819,16 +892,25 @@ class MPCTracker:
         opti.set_value(self._p_omega_max, max(self._omega_max_eff, _FLOOR))
 
         # ── Warm start ───────────────────────────────────────────────
+        # In single shooting X e' un'ESPRESSIONE, non una variabile: non ha un
+        # valore iniziale da assegnare (la traiettoria segue dagli ingressi).
+        single = (cfg.shooting == 'single')
+        # Con N_c < N solo le prime N_c colonne sono variabili: U e' una loro
+        # espressione, e set_initial su U fallirebbe.
+        n_c = int(self._U_free.shape[1])
         if cfg.warm_start and self._prev_u is not None and self._prev_x is not None:
             try:
-                opti.set_initial(self._U, self._prev_u.T)
-                opti.set_initial(self._X, self._prev_x.T)
+                opti.set_initial(self._U_free, self._prev_u[:n_c].T)
+                if not single:
+                    opti.set_initial(self._X, self._prev_x.T)
             except Exception:
-                opti.set_initial(self._X, x_ref.T)
-                opti.set_initial(self._U, np.zeros((NU, N)))
+                if not single:
+                    opti.set_initial(self._X, x_ref.T)
+                opti.set_initial(self._U_free, np.zeros((NU, n_c)))
         else:
-            opti.set_initial(self._X, x_ref.T)
-            opti.set_initial(self._U, np.zeros((NU, N)))
+            if not single:
+                opti.set_initial(self._X, x_ref.T)
+            opti.set_initial(self._U_free, np.zeros((NU, n_c)))
 
         # ── Zero-velocity fallback after too many consecutive failures (#1) ──
         if self._consecutive_failures >= self._MAX_CONSEC_FAILURES:
