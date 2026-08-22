@@ -1,0 +1,58 @@
+[
+  {
+    "N": 5,
+    "modo": "multiple",
+    "n_var": 51,
+    "n_con": 56,
+    "jac_nnz": 131,
+    "jac_density": 0.04586834733893557,
+    "hess_nnz": 315,
+    "hess_density": 0.12110726643598616,
+    "J": 2668.880350175422,
+    "ok": true,
+    "iter": 15,
+    "ms": 85.78748099989753
+  },
+  {
+    "N": 5,
+    "modo": "single",
+    "n_var": 15,
+    "n_con": 20,
+    "jac_nnz": 20,
+    "jac_density": 0.06666666666666667,
+    "hess_nnz": 225,
+    "hess_density": 1.0,
+    "J": 2668.8803498632674,
+    "ok": true,
+    "iter": 16,
+    "ms": 146.53999900019699
+  },
+  {
+    "N": 15,
+    "modo": "multiple",
+    "n_var": 141,
+    "n_con": 156,
+    "jac_nnz": 381,
+    "jac_density": 0.017321331151118384,
+    "hess_nnz": 885,
+    "hess_density": 0.044514863437452847,
+    "J": 9244.060767879335,
+    "ok": true,
+    "iter": 20,
+    "ms": 208.9547080004195
+  },
+  {
+    "N": 15,
+    "modo": "single",
+    "n_var": 45,
+    "n_con": 60,
+    "jac_nnz": 60,
+    "jac_density": 0.022222222222222223,
+    "hess_nnz": 2025,
+    "hess_density": 1.0,
+    "J": 9244.0607720335,
+    "ok": true,
+    "iter": 21,
+    "ms": 190.78907099992648
+  }
+]

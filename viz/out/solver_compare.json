@@ -1,0 +1,46 @@
+[
+  {
+    "regime": "penalty (ostacoli nel costo)",
+    "caso": "centred_pillar",
+    "n": 141,
+    "m": 156,
+    "n_ineq": 60,
+    "ipopt": {
+      "ok": true,
+      "f": 9244.06079260452,
+      "iter": 15,
+      "ms": 44.71189800005959,
+      "status": "Solve_Succeeded"
+    },
+    "sqp": {
+      "ok": true,
+      "f": 9244.060946498346,
+      "iter": 6,
+      "ms": 151.33829600017634,
+      "status": "Solve_Succeeded"
+    },
+    "stesso_minimo": true
+  },
+  {
+    "regime": "l1 (ostacoli come vincoli)",
+    "caso": "centred_pillar",
+    "n": 261,
+    "m": 396,
+    "n_ineq": 300,
+    "ipopt": {
+      "ok": true,
+      "f": 17414.033157550377,
+      "iter": 21,
+      "ms": 70.6674410002961,
+      "status": "Solve_Succeeded"
+    },
+    "sqp": {
+      "ok": true,
+      "f": 17414.05230175045,
+      "iter": 7,
+      "ms": 4813.144146000013,
+      "status": "Solve_Succeeded"
+    },
+    "stesso_minimo": true
+  }
+]
