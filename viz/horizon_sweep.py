@@ -248,7 +248,7 @@ def main() -> int:
         im = ax.imshow(D, origin="lower", aspect="auto", cmap=cmap)
         ax.set_xticks(range(len(dts))); ax.set_xticklabels([f"{d:g}" for d in dts])
         ax.set_yticks(range(len(Ns))); ax.set_yticklabels(Ns)
-        ax.set_xlabel("dt [s]"); ax.set_ylabel("N")
+        ax.set_xlabel("$\\Delta t$ [s]"); ax.set_ylabel("$N$")
         ax.set_title(tit, fontsize=10)
         for i in range(len(Ns)):
             for j in range(len(dts)):
@@ -268,14 +268,14 @@ def main() -> int:
                    c=col, alpha=.75, edgecolors="k", linewidths=.4)
         ax.annotate(f"{a['N']}/{a['dt']:g}", (a["p95"], a["clearance"]),
                     fontsize=6.5, xytext=(3, 3), textcoords="offset points")
-    ax.axvline(budget, ls="--", c="k", label=f"budget {budget:.0f} ms")
+    ax.axvline(budget, ls="--", c="k", label=f"cycle budget {budget:.0f} ms")
     ax.set_xscale("log")
-    ax.set_xlabel("solve p95 [ms]"); ax.set_ylabel("clearance minima [m]")
-    ax.set_title("prestazione contro costo\n(verde = entro budget)", fontsize=10)
+    ax.set_xlabel("solve time, 95th pct. [ms]"); ax.set_ylabel("minimum clearance [m]")
+    ax.set_title("performance against cost\n(green = within budget)", fontsize=10)
     ax.grid(alpha=.3); ax.legend(fontsize=8)
 
-    fig.suptitle("Scelta dell'orizzonte: N × dt (dispense §7.2.5) — "
-                 f"riquadro rosso = configurazione deployata", fontsize=11)
+    fig.suptitle("Horizon selection: $N \\times \\Delta t$ --- "
+                 f"red box = deployed configuration", fontsize=11)
     fig.tight_layout()
     out = os.path.join(out_dir, "horizon_sweep.png")
     common.save_figure(fig, out, 130)

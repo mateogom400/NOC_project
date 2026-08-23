@@ -177,20 +177,20 @@ def main() -> int:
     p50 = np.array([np.median(acc[k]) if acc[k] else np.nan for k in range(N + 1)])
     p95 = np.array([np.percentile(acc[k], 95) if acc[k] else np.nan for k in range(N + 1)])
     a1.fill_between(kk, 0, p95, alpha=.2, color="#1f77b4", label="p95")
-    a1.plot(kk, p50, "o-", color="#1f77b4", lw=2, label="mediana")
+    a1.plot(kk, p50, "o-", color="#1f77b4", lw=2, label="median")
     a1.axhline(1.74e-2, ls="--", c="#2ca02c",
-               label="errore di Euler a 3 s (1.7 cm)")
-    a1.set_xlabel("orizzonte di predizione [s]"); a1.set_ylabel("errore [m]")
-    a1.set_title("Errore di predizione contro l'impianto MuJoCo")
+               label="Euler truncation error over 3 s (1.7 cm)")
+    a1.set_xlabel("prediction horizon [s]"); a1.set_ylabel("position error [m]")
+    a1.set_title("Prediction error against the plant")
     a1.grid(alpha=.3); a1.legend(fontsize=8)
 
     yy = np.array([np.degrees(np.median(acc_yaw[k])) if acc_yaw[k] else np.nan
                    for k in range(N + 1)])
     a2.plot(kk, yy, "o-", color="#d62728", lw=2)
-    a2.set_xlabel("orizzonte di predizione [s]"); a2.set_ylabel("errore di yaw [deg]")
-    a2.set_title("Errore di orientamento")
+    a2.set_xlabel("prediction horizon [s]"); a2.set_ylabel("heading error [deg]")
+    a2.set_title("Heading error")
     a2.grid(alpha=.3)
-    fig.suptitle(f"Modello di predizione contro impianto — {nome}  "
+    fig.suptitle(f"Prediction model against plant --- {nome}  "
                  f"(dispense §7.2.5)", fontsize=10)
     fig.tight_layout()
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out",

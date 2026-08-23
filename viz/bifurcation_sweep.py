@@ -123,13 +123,13 @@ def main() -> int:
             matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots(figsize=(7.2, 4.4))
-        ax.plot(ws, seps, "o-", color="#1f77b4", lw=2, label="‖x*(sx) − x*(dx)‖")
-        ax.axhline(TOL_SEP, ls=":", c="grey", label=f"soglia numerica {TOL_SEP:g}")
+        ax.plot(ws, seps, "o-", color="#1f77b4", lw=2, label="$\\|z^\\star_L - z^\\star_R\\|$")
+        ax.axhline(TOL_SEP, ls=":", c="grey", label=f"solver tolerance {TOL_SEP:g}")
         ax.axvline(cfg.W_obs_sigmoid, ls="--", c="#d62728",
-                   label=f"W_obs deployato = {cfg.W_obs_sigmoid:g}")
+                   label=f"deployed $W_{{\\mathrm{{obs}}}}$ = {cfg.W_obs_sigmoid:g}")
         ax.set_xscale("log"); ax.set_yscale("symlog", linthresh=TOL_SEP)
-        ax.set_xlabel("W_obs_sigmoid"); ax.set_ylabel("distanza fra i due minimi")
-        ax.set_title(f"Biforcazione di x*(ϑ) — {etichetta}\n"
+        ax.set_xlabel("$W_{\\mathrm{obs}}$"); ax.set_ylabel("separation between the two minima [m]")
+        ax.set_title(f"Bifurcation of $z^\\star(\\vartheta)$ --- {etichetta}\n"
                      "(dispense §4.4.5, Fig. 4.17)")
         ax.grid(alpha=.3); ax.legend(fontsize=8)
         fig.tight_layout()

@@ -91,7 +91,7 @@ def figure(sc, cfg, hist, xs, ys, X, Y, C, log=True, out=None, show=True):
     # ---- (a) superficie 3-D ------------------------------------------------
     ax = fig.add_subplot(1, 3, 1, projection="3d")
     ax.plot_surface(X, Y, Z, cmap=cm.viridis, linewidth=0, antialiased=True,
-                    alpha=0.85, rcount=90, ccount=90)
+                    alpha=0.85, rcount=90, ccount=90, rasterized=True)
 
     def zof(p):
         i = np.clip(np.searchsorted(xs, p[0]) - 1, 0, len(xs) - 1)
@@ -100,10 +100,10 @@ def figure(sc, cfg, hist, xs, ys, X, Y, C, log=True, out=None, show=True):
 
     traj = poses[:, :2]
     ax.plot(traj[:, 0], traj[:, 1], [zof(p) for p in traj],
-            color="red", lw=3.0, zorder=10, label="traiettoria percorsa")
+            color="red", lw=3.0, zorder=10, label="executed trajectory")
     pred = hist["pred"][0]
     ax.plot(pred[:, 0], pred[:, 1], [zof(p) for p in pred],
-            color="white", lw=1.6, ls="--", label="orizzonte MPC (primo ciclo)")
+            color="white", lw=1.6, ls="--", label="MPC horizon (first cycle)")
     ax.scatter([traj[0, 0]], [traj[0, 1]], [zof(traj[0])], color="red", s=70,
                depthshade=False, label="robot")
     ax.set_xlabel("x [m]"); ax.set_ylabel("y [m]")
@@ -115,24 +115,24 @@ def figure(sc, cfg, hist, xs, ys, X, Y, C, log=True, out=None, show=True):
 
     # ---- (b) curve di livello dall'alto ------------------------------------
     ax2 = fig.add_subplot(1, 3, 2)
-    cs = ax2.contourf(X, Y, Z, levels=40, cmap=cm.viridis)
+    cs = ax2.contourf(X, Y, Z, levels=40, cmap=cm.viridis, rasterized=True)
     ax2.contour(X, Y, Z, levels=18, colors="k", linewidths=0.3, alpha=0.35)
     fig.colorbar(cs, ax=ax2, fraction=0.046, pad=0.02, label=zlab)
     ax2.contourf(X, Y, reach.astype(float), levels=[0.5, 1.5],
-                 colors=["none"], hatches=["////"], alpha=0.0)
+                 colors=["none"], hatches=["////"], alpha=0.0, rasterized=True)
     ax2.contour(X, Y, reach.astype(float), levels=[0.5], colors="deepskyblue",
                 linewidths=2.0)
-    ax2.scatter(sc.obstacles[:, 0], sc.obstacles[:, 1], s=5, c="k", label="ostacoli")
+    ax2.scatter(sc.obstacles[:, 0], sc.obstacles[:, 1], s=5, c="k", label="LiDAR returns")
     refs = hist.get("ref")
     if refs is not None and refs[0] is not None:
         ax2.plot(refs[0][:, 0], refs[0][:, 1], color="orange", lw=1.4, ls="-.",
-                 label="riferimento A* (primo)")
+                 label="A* reference (first)")
         last = next((r for r in refs[::-1] if r is not None), None)
         if last is not None and not np.array_equal(last, refs[0]):
             ax2.plot(last[:, 0], last[:, 1], color="magenta", lw=1.2, ls=":",
-                     label="riferimento A* (ultimo)")
-    ax2.plot(traj[:, 0], traj[:, 1], color="red", lw=2.4, label="percorso")
-    ax2.plot(pred[:, 0], pred[:, 1], "--", color="w", lw=1.6, label="orizzonte MPC")
+                     label="A* reference (last)")
+    ax2.plot(traj[:, 0], traj[:, 1], color="red", lw=2.4, label="executed path")
+    ax2.plot(pred[:, 0], pred[:, 1], "--", color="w", lw=1.6, label="MPC horizon")
     ax2.scatter([sc.goal[0]], [sc.goal[1]], marker="*", s=180, c="gold",
                 edgecolors="k", label="goal", zorder=5)
     ax2.scatter([traj[0, 0]], [traj[0, 1]], s=70, c="red", edgecolors="w",
@@ -142,22 +142,22 @@ def figure(sc, cfg, hist, xs, ys, X, Y, C, log=True, out=None, show=True):
         ax2.scatter([mx], [my], marker="v", s=95,
                     c="lime" if is_goal else "orangered", edgecolors="k", zorder=6)
     ax2.set_aspect("equal"); ax2.set_xlabel("x [m]"); ax2.set_ylabel("y [m]")
-    ax2.set_title("(b) livelli · ▽ minimi · — raggiungibile", pad=6)
+    ax2.set_title("(b) level sets  $\\triangledown$ local minima  --- reachable set", pad=6)
     ax2.legend(loc="upper right", fontsize=7)
 
     # ---- (c) il costo VERO lungo il tempo ---------------------------------
     ax3 = fig.add_subplot(1, 3, 3)
     t = np.arange(len(hist["cost"])) * cfg.dt
     ax3.plot(t, hist["cost"], color="navy", lw=1.8)
-    ax3.set_xlabel("tempo [s]"); ax3.set_ylabel("J* (costo ottimo del ciclo)")
-    ax3.set_title("(c) J* per ciclo di controllo")
+    ax3.set_xlabel("time [s]"); ax3.set_ylabel("$J^\\star$ (optimal cost per cycle)")
+    ax3.set_title("(c) $J^\\star$ per control cycle")
     ax3.grid(alpha=0.3)
     axb = ax3.twinx()
     axb.plot(t, hist["solve_ms"], color="darkorange", lw=1.0, alpha=0.75)
     axb.set_ylabel("solve [ms]", color="darkorange")
     axb.axhline(cfg.dt * 1000, color="darkorange", ls=":", lw=1.0)
 
-    fig.suptitle(f"Pannello 1 — paesaggio di navigazione · profilo N={cfg.N} "
+    fig.suptitle(f"Panel 1 --- navigation cost landscape  ($N$={cfg.N}, "
                  f"dt={cfg.dt} W_obs={cfg.W_obs_sigmoid:g} obs_r={cfg.obs_r:g}",
                  fontsize=11)
     fig.tight_layout(rect=[0, 0, 1, 0.94])
@@ -188,7 +188,7 @@ def animate(sc, cfg, hist, xs, ys, X, Y, C, log=True, out=None, fps=8, stride=1)
     fig = plt.figure(figsize=(11, 5))
     ax = fig.add_subplot(1, 2, 1, projection="3d")
     ax.plot_surface(X, Y, Z, cmap=cm.viridis, alpha=0.8, linewidth=0,
-                    rcount=70, ccount=70)
+                    rcount=70, ccount=70, rasterized=True)
     ax.set_xlabel("x [m]"); ax.set_ylabel("y [m]")
     ax.set_zlabel("log10(c - c_min + 1)" if log else "c")
     ax.view_init(elev=52, azim=-125)
@@ -197,7 +197,7 @@ def animate(sc, cfg, hist, xs, ys, X, Y, C, log=True, out=None, fps=8, stride=1)
     pr, = ax.plot([], [], [], "--", color="w", lw=1.4)
 
     ax2 = fig.add_subplot(1, 2, 2)
-    ax2.contourf(X, Y, Z, levels=40, cmap=cm.viridis)
+    ax2.contourf(X, Y, Z, levels=40, cmap=cm.viridis, rasterized=True)
     ax2.scatter(sc.obstacles[:, 0], sc.obstacles[:, 1], s=5, c="k")
     ax2.scatter([sc.goal[0]], [sc.goal[1]], marker="*", s=170, c="gold",
                 edgecolors="k", zorder=5)

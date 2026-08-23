@@ -596,9 +596,14 @@ def sec_hessian(res: dict, M: Macros) -> list[str]:
     il = M.add("resIterLBFGS", str(lb["iterazioni"]))
     sav = M.add("resHessIterSaving", pc(1 - ex["iterazioni"] / lb["iterazioni"], 0),
                 "iterazioni risparmiate [%]")
-    rows = [["exact Hessian", str(ex["iterazioni"]), fx(ex["solve_ms"], 1),
+    # in grassetto il conteggio di iterazioni migliore: e' il confronto che la
+    # tabella esiste per fare, e le linee guida chiedono di evidenziarlo
+    def _it(v, best):
+        return r"\textbf{" + str(v) + "}" if v == best else str(v)
+    best_it = min(ex["iterazioni"], lb["iterazioni"])
+    rows = [["exact Hessian", _it(ex["iterazioni"], best_it), fx(ex["solve_ms"], 1),
              m(smart(ex["J"])), tt(ex["status"])],
-            ["L-BFGS", str(lb["iterazioni"]), fx(lb["solve_ms"], 1),
+            ["L-BFGS", _it(lb["iterazioni"], best_it), fx(lb["solve_ms"], 1),
              m(smart(lb["J"])), tt(lb["status"])]]
     return [
         r"\resSubsec{Exact Hessian against a quasi-Newton approximation}",
@@ -618,7 +623,8 @@ def sec_hessian(res: dict, M: Macros) -> list[str]:
     ] + table("lrrrl",
               ["Hessian", "iterations", "solve [ms]", "$J^\\star$", "status"], rows,
               "Interior-point iterations with the exact Hessian and with the "
-              "limited-memory quasi-Newton approximation, on the same instance.",
+              "limited-memory quasi-Newton approximation, on the same instance. "
+              "Bold: the lower iteration count.",
               "res:tab:hess")
 
 
@@ -743,7 +749,8 @@ def sec_penalty(res: dict, M: Macros) -> list[str]:
 
     rows = []
     for r in d["tabella"]:
-        s1 = "$0$" if r["slack_l1"] < 1e-8 else f"${sci(r['slack_l1'])}$"
+        # lo zero esatto e' IL risultato della tabella (Thm sulla penalita' esatta)
+        s1 = r"$\mathbf{0}$" if r["slack_l1"] < 1e-8 else f"${sci(r['slack_l1'])}$"
         rows.append([f"${sci(r['rho'], 0)}$", s1, f"${sci(r['slack_l2'])}$"])
     return [
         r"\resSubsec{Soft obstacle constraint: exact $\ell^1$ penalty against $\ell^2$}",
@@ -757,16 +764,16 @@ def sec_penalty(res: dict, M: Macros) -> list[str]:
         f"The obstacle term was re-posed as a genuine inequality constraint "
         f"$d(x_k,\\mathcal{{P}})\\ge d_{{\\mathrm{{safe}}}}$ with $d_{{\\mathrm{{safe}}}}"
         f"={ds}$~m, relaxed by a slack variable penalised either linearly ($\\ell^1$) or "
-        f"quadratically ($\\ell^2$) with weight $\\rho$. Solved as a hard constraint the "
+        f"quadratically ($\\ell^2$) with weight $\\rho_s$. Solved as a hard constraint the "
         f"instance is feasible and the largest multiplier of an active distance "
         f"constraint is $\\mu^\\star={mu}$.",
         "",
         f"The two penalties then behave exactly as the exact-penalty theorem predicts "
         f"(Table~\\ref{{res:tab:penalty}}). The $\\ell^1$ slack is a threshold "
         f"phenomenon: it is nonzero below the threshold and drops to zero --- not small, "
-        f"zero to solver tolerance --- from $\\rho={rzs}$ onwards, i.e.\\ once $\\rho$ "
+        f"zero to solver tolerance --- from $\\rho_s={rzs}$ onwards, i.e.\\ once $\\rho_s$ "
         f"exceeds the multiplier of the corresponding hard constraint. The $\\ell^2$ "
-        f"slack instead decays like $1/\\rho$, {slope_txt}, and never reaches zero at "
+        f"slack instead decays like $1/\\rho_s$, {slope_txt}, and never reaches zero at "
         f"any finite weight.",
         "",
         f"The practical reading for this stack is that a soft constraint can be made "
@@ -776,10 +783,12 @@ def sec_penalty(res: dict, M: Macros) -> list[str]:
         f"violation.",
         "",
     ] + table("rrr",
-              [r"$\rho$", r"max slack, $\ell^1$ [m]", r"max slack, $\ell^2$ [m]"],
+              [r"$\rho_s$", r"max slack, $\ell^1$ [m]", r"max slack, $\ell^2$ [m]"],
               rows,
               "Residual constraint violation against the penalty weight, for the "
               "non-smooth and the smooth relaxation of the same distance constraint. "
+              "Bold: the violations that are exactly zero, which is the result the "
+              "exact-penalty theorem predicts and the smooth relaxation never attains. "
               "Zero entries are below the solver tolerance of "
               "$1\\times 10^{-8}$~m.",
               "res:tab:penalty")
@@ -1292,7 +1301,7 @@ def sec_pareto(extra: dict, M: Macros) -> list[str]:
         bary_txt,
         "",
     ] + table("lrrrrc",
-              [r"$\alpha$", "accuracy [m]", "effort", "time [s]", "clearance [m]",
+              [r"$\kappa$", "accuracy [m]", "effort", "time [s]", "clearance [m]",
                "non-dom."], rows,
               "Closed-loop outcome of each scalarisation of the three objectives. "
               "Bold: non-dominated points.",
@@ -1442,9 +1451,12 @@ def sec_solver_compare(extra: dict, M: Macros) -> list[str]:
     all_same = all(r.get("stesso_minimo") for r in rows_in)
     M.add("resSolverSameMinima", yesno(all_same))
 
+    def _ms(v, vince):
+        t = fx(v, 0)
+        return r"\textbf{" + t + "}" if vince else t
     rows = [[solver_regime(r["regime"]), str(r["n_ineq"]),
-             f'{fx(r["ipopt"]["ms"],0)} / {r["ipopt"]["iter"]}',
-             f'{fx(r["sqp"]["ms"],0)} / {r["sqp"]["iter"]}',
+             f'{_ms(r["ipopt"]["ms"], r["ipopt"]["ms"] <= r["sqp"]["ms"])} / {r["ipopt"]["iter"]}',
+             f'{_ms(r["sqp"]["ms"], r["sqp"]["ms"] < r["ipopt"]["ms"])} / {r["sqp"]["iter"]}',
              m(fx(r["sqp"]["ms"] / r["ipopt"]["ms"], 1) + r"\times"),
              yesno(r.get("stesso_minimo"))] for r in rows_in]
 
@@ -1494,7 +1506,7 @@ def sec_solver_compare(extra: dict, M: Macros) -> list[str]:
                       "speed-up", "same min."], rows,
                      "The same instance solved by a primal--dual interior-point method "
                      "and by an SQP with an active-set QP solver, in both obstacle "
-                     "regimes. Both are started cold.",
+                     "regimes. Both are started cold. Bold: the faster of the two.",
                      "res:tab:solvercmp")
 
 
@@ -1683,7 +1695,7 @@ def sec_robust(extra: dict, M: Macros) -> list[str]:
     kinds = {outcome(r.get("esito", "")) for r in rows_in}
     frasi = []
     if "constraint inactive" in kinds:
-        frasi.append("where $d_{\\mathrm{safe}}+\\beta$ stays below the clearance the "
+        frasi.append("where $d_{\\mathrm{safe}}+\\gamma$ stays below the clearance the "
                      "trajectory already keeps, the constraint is inactive and correctly "
                      "does nothing")
     if any("effective" in k for k in kinds):
@@ -1723,15 +1735,15 @@ def sec_robust(extra: dict, M: Macros) -> list[str]:
         r"\emph{predicted} trajectory, and \S\,\ref{res:pred} measures how far that "
         r"diverges from the executed one. This closes the gap instead of noting it.}",
         "",
-        f"The obstacle constraint is tightened by a margin $\\beta(k)$ that grows along "
-        f"the horizon, $\\lVert p_k-o_j\\rVert \\ge d_{{\\mathrm{{safe}}}}+\\beta(k)-s_{{jk}}$. "
+        f"The obstacle constraint is tightened by a margin $\\gamma(k)$ that grows along "
+        f"the horizon, $\\lVert p_k-o_j\\rVert \\ge d_{{\\mathrm{{safe}}}}+\\gamma(k)-s_{{jk}}$. "
         f"The margin is not postulated: it is read off the "
         f"$\\resBetaQuantile$th percentile of the prediction error recorded in the run "
         f"of \\S\\,\\ref{{res:pred}}, so the tube is derived from data rather than from an "
         f"assumption about the disturbance.",
         "",
         f"Three properties hold by construction and are worth checking rather than "
-        f"assuming (Table~\\ref{{res:tab:beta}}). $\\beta(0)=\\resBetaZero$ exactly: at "
+        f"assuming (Table~\\ref{{res:tab:beta}}). $\\gamma(0)=\\resBetaZero$ exactly: at "
         f"the first node the state is fixed by an equality constraint, so there is "
         f"nothing to hedge against and the constraint is not tightened where it would "
         f"only remove feasible motion. The margin is monotone "
@@ -1751,7 +1763,7 @@ def sec_robust(extra: dict, M: Macros) -> list[str]:
         r"been verified.}",
         "",
     ]
-    L += table("rrr", ["$k$", "$k\\,\\Delta t$ [s]", r"$\beta(k)$ [m]"], brows,
+    L += table("rrr", ["$k$", "$k\\,\\Delta t$ [s]", r"$\gamma(k)$ [m]"], brows,
                f"Constraint back-off derived from the ${fx(100*q,0)}$th percentile of the "
                f"measured prediction error. The offset at $k=0$ is subtracted: it is "
                f"time misalignment, not model uncertainty, and including it would inflate "

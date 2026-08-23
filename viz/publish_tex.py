@@ -48,7 +48,8 @@ FIGURES = (
     ("biforcazione_centred_pillar.pdf", "bifurcation.pdf"),
     ("horizon_sweep.pdf",            "horizon_sweep.pdf"),
     ("pareto_front.pdf",             "pareto_front.pdf"),
-    # ("pannello2_*_merit.pdf",      "decision_plane.pdf"),   # non citata dal report
+    ("pannello1_bag_*.pdf",          "cost_landscape.pdf"),
+    ("pannello2_*_merit.pdf",        "decision_plane.pdf"),
 )
 
 

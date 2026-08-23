@@ -263,7 +263,7 @@ def main() -> int:
 
     ax = fig.add_subplot(1, 2, 1, projection="3d")
     ax.plot_surface(AA, BB, L, cmap=cm.viridis, linewidth=0, alpha=0.85,
-                    rcount=80, ccount=80)
+                    rcount=80, ccount=80, rasterized=True)
 
     def zof(a, b):
         i = int(np.clip(np.searchsorted(A, a) - 1, 0, len(A) - 1))
@@ -274,15 +274,15 @@ def main() -> int:
         if len(P):
             ax.plot(P[:, 0], P[:, 1], [zof(*q) for q in P], "-o", color=col,
                     ms=3.0, lw=1.6, label=nm)
-    ax.set_xlabel("α  (verso x*_R)"); ax.set_ylabel("β")
+    ax.set_xlabel("$s_1$  (towards $z^\\star_R$)"); ax.set_ylabel("$s_2$")
     ax.set_zlabel("log10(T − min + 1)", labelpad=8)
     ax.tick_params(labelsize=7)
-    ax.set_title("(a) superficie sul piano delle decisioni", pad=2)
+    ax.set_title("(a) objective on the cutting plane", pad=2)
     ax.legend(fontsize=7, loc="upper left")
     ax.view_init(elev=50, azim=-120)
 
     ax2 = fig.add_subplot(1, 2, 2)
-    cs = ax2.contourf(AA, BB, L, levels=45, cmap=cm.viridis)
+    cs = ax2.contourf(AA, BB, L, levels=45, cmap=cm.viridis, rasterized=True)
     ax2.contour(AA, BB, L, levels=22, colors="k", linewidths=0.3, alpha=0.35)
     fig.colorbar(cs, ax=ax2, fraction=0.046, pad=0.02, label="log10(T − min + 1)")
     for P, col, nm in ((PL, "red", "IPOPT da sinistra"), (PR, "deepskyblue", "IPOPT da destra")):
@@ -291,14 +291,14 @@ def main() -> int:
             ax2.scatter([P[0, 0]], [P[0, 1]], marker="s", s=55, c=col,
                         edgecolors="k", zorder=6)
     ax2.scatter([aL], [bL], marker="*", s=230, c="red", edgecolors="k",
-                zorder=7, label=f"x*_L  J={resL.cost:.0f}")
+                zorder=7, label=f"$z^\\star_L$  $J$={resL.cost:.0f}")
     ax2.scatter([aR], [bR], marker="*", s=230, c="deepskyblue", edgecolors="k",
-                zorder=7, label=f"x*_R  J={resR.cost:.0f}")
-    ax2.set_xlabel("α  (verso x*_R)"); ax2.set_ylabel("β")
-    ax2.set_title("(b) curve di livello · ■ x⁰ · ★ minimi · linea = iterati IPOPT")
+                zorder=7, label=f"$z^\\star_R$  $J$={resR.cost:.0f}")
+    ax2.set_xlabel("$s_1$  (towards $z^\\star_R$)"); ax2.set_ylabel("$s_2$")
+    ax2.set_title("(b) level sets   $\\blacksquare$ $z^0$   $\\star$ minima   line = IPOPT iterates")
     ax2.legend(fontsize=7, loc="best")
 
-    fig.suptitle(f"Pannello 2 — spazio delle decisioni (R^{xL.size}) · {sc.name} · "
+    fig.suptitle(f"Panel 2 --- decision space $\\mathbb{{R}}^{{{xL.size}}}$ --- {sc.name} --- "
                  f"{'obiettivo f' if args.objective else 'funzione di merito ℓ1'}",
                  fontsize=11)
     fig.tight_layout(rect=[0, 0, 1, 0.93])
