@@ -67,6 +67,12 @@
 \newcommand{\Rjerk}{R_{\mathrm{jerk}}}
 \newcommand{\dsafe}{d_{\mathrm{safe}}}
 \newcommand{\Ninput}{N_c}
+% simboli delle sezioni sul basso livello (§\ref{sec:champ}, §\ref{sec:g1rl})
+\newcommand{\Tstr}{T_{\mathrm{str}}}
+\newcommand{\Tst}{T_{\mathrm{st}}}
+\newcommand{\Tsw}{T_{\mathrm{sw}}}
+\newcommand{\pf}{p^{\mathrm{f}}}
+\newcommand{\qdef}{q^{\mathrm{def}}}
 
 \input{Configuration_files/config}
 
@@ -80,6 +86,7 @@
 \newcommand{\advisor}{Prof. Lorenzo Mario Fagiano}
 \newcommand{\groupmembers}{Mateo Gomez \\ Lorenzo Ortolani \\ Francesco Pedrini}
 \newcommand{\YEAR}{2025-2026}
+\newcommand{\keywords}{Nonlinear Model Predictive Control, Interior-Point Optimization, Exact Penalty Methods, Algorithmic Differentiation, Rolling-Horizon Planning, Legged Robot Navigation}
 \renewcommand{\abstract}{Navigating an unknown environment without a prior map can be posed as two
 optimization programs solved at every control cycle: a discrete shortest-path problem on an occupancy grid
 rebuilt from the current LiDAR scan, and a continuous nonlinear program that turns the resulting geometric
@@ -528,7 +535,7 @@ formulation, and getting it wrong is a documented way to make a well-posed probl
 \section{Formulation of the optimization program}
 \label{sec:formulation}
 
-\subsection{Reference generation: \astar{} as a discrete program}
+\subsection{Reference generation: \texorpdfstring{\astar{}}{A*} as a discrete program}
 \label{sec:astar}
 
 At every planning tick the geometric reference is the solution of a shortest-path problem on the
