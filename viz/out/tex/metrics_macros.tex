@@ -4,7 +4,7 @@
 %   rigenerare con:  python3 viz/make_results.py
 %              o con: python3 viz/results_tex.py
 %
-%   commit 5d8c55dc2d on G1_optimal_trajectory   (2026-08-22T13:21:40+00:00)
+%   commit 158985edb8 on G1_optimal_trajectory   (2026-08-23T08:48:50+00:00)
 %
 % CONVENZIONE
 %   - le macro NUMERICHE si espandono in contenuto da math mode:
@@ -21,10 +21,10 @@
 \providecommand{\resdef}[2]{\expandafter\def\csname #1\endcsname{#2}}
 
 % --- provenienza e profilo -----------------------------------------------
-\resdef{resCommit}{5d8c55dc2d} % commit corto
+\resdef{resCommit}{158985edb8} % commit corto
 \resdef{resBranch}{G1\_optimal\_trajectory} % branch
 \resdef{resProfile}{\texttt{planner\_params\_g1.yaml}} % file YAML
-\resdef{resDate}{2026-08-22} % data della run
+\resdef{resDate}{2026-08-23} % data della run
 \resdef{resCasadi}{3.7.2}
 \resdef{resNumpy}{1.26.4}
 \resdef{resPython}{3.10.12}
@@ -67,9 +67,9 @@
 \resdef{resNpar}{121}         % parametri CasADi
 \resdef{resJacDensity}{1.73}  % densita' jacobiano [%]
 \resdef{resHessDensity}{4.45} % densita' hessiana [%]
-\resdef{resNvarBig}{231}      % variabili a N=25
-\resdef{resNbig}{25}
-\resdef{resJacDensityBig}{1.07}
+\resdef{resNvarBig}{456}      % variabili a N=50
+\resdef{resNbig}{50}
+\resdef{resJacDensityBig}{0.54}
 
 % --- single contro multiple shooting -------------------------------------
 \resdef{resShootN}{15}              % orizzonte del confronto
@@ -83,17 +83,17 @@
 
 % --- derivate: AD contro differenze finite -------------------------------
 \resdef{resDerivNvar}{141}      % variabili del punto di prova
-\resdef{resTimeF}{175.3}        % una valutazione di f [us]
-\resdef{resTimeGrad}{221.2}     % un gradiente per AD [us]
-\resdef{resADratio}{1.14}       % AD in valutazioni di f
-\resdef{resADratioMin}{0.76}
-\resdef{resADratioMax}{1.80}
+\resdef{resTimeF}{94.4}         % una valutazione di f [us]
+\resdef{resTimeGrad}{160.0}     % un gradiente per AD [us]
+\resdef{resADratio}{1.59}       % AD in valutazioni di f
+\resdef{resADratioMin}{1.21}
+\resdef{resADratioMax}{2.10}
 \resdef{resFDforwardEvals}{142}
 \resdef{resFDcentralEvals}{282}
 \resdef{resFDforwardErr}{5.50\times 10^{-8}}
 \resdef{resFDcentralErr}{1.29\times 10^{-10}}
 \resdef{resCycleBudget}{125}    % budget di ciclo [ms]
-\resdef{resFDcentralBudget}{40} % quota del budget per FD centrate [%]
+\resdef{resFDcentralBudget}{21} % quota del budget per FD centrate [%]
 
 % --- hessiana esatta contro L-BFGS ---------------------------------------
 \resdef{resIterExactHess}{20}
@@ -108,7 +108,7 @@
 \resdef{resSolverSameMinima}{yes}
 
 % --- condizioni di ottimalita' lungo la missione -------------------------
-\resdef{resKKTcycles}{5}        % cicli analizzati
+\resdef{resKKTcycles}{9}        % cicli analizzati
 \resdef{resLICQalways}{yes}
 \resdef{resStrictAlways}{yes}
 \resdef{resSOCalways}{yes}
@@ -125,13 +125,13 @@
 \resdef{resDsafe}{1.10}     % distanza di sicurezza imposta [m]
 \resdef{resMuMax}{8905}     % moltiplicatore massimo del vincolo di distanza
 \resdef{resRhoLoneZero}{1\times 10^{4}} % rho a cui lo slack l1 si annulla
-\resdef{resSlopeLtwo}{-0.61} % pendenza log-log della coda l2
+\resdef{resSlopeLtwo}{-1.00} % pendenza log-log della coda l2
 
 % --- vincolo terminale di equilibrio -------------------------------------
 \resdef{resTermSlackMax}{0}  % slack terminale massimo
 \resdef{resTermFeasible}{yes}
 \resdef{resTermCostMin}{0.2} % costo minimo [%]
-\resdef{resTermCostMax}{85.0} % costo massimo [%]
+\resdef{resTermCostMax}{75.0} % costo massimo [%]
 \resdef{resLagDiscrete}{1.000000} % 1 - exp(-dt/tau) al profilo deployato
 
 % --- vincoli robusti (constraint tightening) -----------------------------
@@ -152,15 +152,15 @@
 \resdef{resBifCostGap}{0.55}     % divario relativo fra i due minimi [%]
 
 % --- path following in theta contro riferimento a tempo ------------------
-\resdef{resVxTime}{0.213}    % vx media, riferimento a tempo
-\resdef{resVxTheta}{0.300}   % vx media, ascissa
-\resdef{resAdvanceTime}{0.636} % avanzamento [m]
-\resdef{resAdvanceTheta}{0.900}
-\resdef{resAdvanceGain}{41}  % guadagno [%]
-\resdef{resIterTime}{11.2}
-\resdef{resIterTheta}{21.0}
+\resdef{resVxTime}{0.214}    % vx media, riferimento a tempo
+\resdef{resVxTheta}{0.299}   % vx media, ascissa
+\resdef{resAdvanceTime}{0.635} % avanzamento [m]
+\resdef{resAdvanceTheta}{0.891}
+\resdef{resAdvanceGain}{40}  % guadagno [%]
+\resdef{resIterTime}{11.8}
+\resdef{resIterTheta}{20.0}
 \resdef{resVrefUnused}{33}   % velocita' lasciata inutilizzata da v_ref [%]
-\resdef{resPFcycles}{4}      % cicli confrontati
+\resdef{resPFcycles}{6}      % cicli confrontati
 
 % --- campagna orizzonte (N, dt) ------------------------------------------
 \resdef{resHorizonBudget}{125}    % budget di ciclo [ms]

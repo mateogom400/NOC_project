@@ -67,20 +67,31 @@ def main() -> int:
             raise SystemExit(f"manca {p}: eseguire prima  python3 viz/results_tex.py")
         locali[name] = open(p, "rb").read()
 
-    # Provenienza: il commit deve dire da quale commit del repo del CODICE
-    # nascono i numeri, altrimenti il .tex nel repo del report e' orfano.
-    def git(*a):
-        try:
-            return subprocess.check_output(["git", *a], cwd=_ROOT,
-                                           stderr=subprocess.DEVNULL).decode().strip()
-        except Exception:
-            return "?"
-    sha_codice = git("rev-parse", "--short", "HEAD")
-    branch_codice = git("rev-parse", "--abbrev-ref", "HEAD")
-    sporco = bool(git("status", "--porcelain"))
+    # Provenienza: si LEGGE da results.json, non si ricalcola.
+    #
+    # Ricalcolarla qui era sbagliato e dava sempre "albero sporco": da quando
+    # viz/out/ non e' piu' ignorato, generare il documento sporca l'albero per
+    # costruzione, quindi al momento della pubblicazione git status e' sporco
+    # SEMPRE. Ma il fatto che conta e' un altro: da quale stato del codice
+    # nascono i NUMERI, ed e' registrato in results.json prima che la campagna
+    # cominci. Il messaggio di commit deve dire la stessa cosa che dice il
+    # documento, altrimenti le due provenienze si contraddicono.
+    meta_path = os.path.join(os.path.dirname(args.src), "results.json")
+    try:
+        meta = json.load(open(meta_path))["meta"]
+        sha_codice = meta["git_commit"][:7]
+        branch_codice = meta["git_branch"]
+        sporco = bool(meta["git_albero_sporco"])
+        quando = meta.get("data_utc", "")[:10]
+    except Exception as exc:
+        raise SystemExit(
+            f"provenienza illeggibile da {meta_path} ({exc}).\n"
+            f"I .tex non vanno pubblicati senza: rigenerare con "
+            f"python3 viz/make_results.py")
     msg = args.message or (
-        f"metrics: rigenerate da {branch_codice}@{sha_codice}"
-        + (" (albero sporco)" if sporco else ""))
+        f"metrics: misurate su {branch_codice}@{sha_codice} ({quando})"
+        + (" [albero sporco: numeri non riproducibili da questo commit]"
+           if sporco else ""))
 
     ref = gh(f"/repos/{args.repo}/git/ref/heads/{args.branch}")
     base_commit = ref["object"]["sha"]
