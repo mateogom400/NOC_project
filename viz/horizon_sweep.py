@@ -278,7 +278,7 @@ def main() -> int:
                  f"riquadro rosso = configurazione deployata", fontsize=11)
     fig.tight_layout()
     out = os.path.join(out_dir, "horizon_sweep.png")
-    fig.savefig(out, dpi=130)
+    common.save_figure(fig, out, 130)
     print(f"\nsalvati:\n  {out}\n  {os.path.join(out_dir,'horizon_sweep.json')}")
     if not args.no_show:
         plt.show()

@@ -163,7 +163,7 @@ def figure(sc, cfg, hist, xs, ys, X, Y, C, log=True, out=None, show=True):
     fig.tight_layout(rect=[0, 0, 1, 0.94])
     if out:
         os.makedirs(os.path.dirname(out), exist_ok=True)
-        fig.savefig(out, dpi=140)
+        common.save_figure(fig, out, 140)
         print(f"salvato: {out}")
     if show:
         plt.show()

@@ -136,7 +136,7 @@ def main() -> int:
         out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out",
                            f"biforcazione_{sc.name}.png")
         os.makedirs(os.path.dirname(out), exist_ok=True)
-        fig.savefig(out, dpi=130)
+        common.save_figure(fig, out, 130)
         print(f"\nsalvato: {out}")
         if not args.no_show:
             plt.show()

@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import glob
+import hashlib
 import json
 import os
 import subprocess
@@ -30,6 +32,24 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
 
 FILES = ("metrics_macros.tex", "metrics_body.tex", "metrics_standalone.tex")
+
+# Figure: nome LOCALE (che contiene bag e scenario) -> nome STABILE nel report.
+#
+# La mappatura non e' un vezzo. I file locali si chiamano
+# errore_predizione_industrial_plant_fix.pdf: registrata una bag nuova il nome
+# cambia, e un \includegraphics che punta al vecchio continua a compilare
+# mostrando la figura sbagliata — nessun errore, figura stantia. Puntando a un
+# nome stabile il report prende sempre l'ultima, e l'identita' della bag resta
+# nella didascalia via \resBag, dove e' informazione e non dipendenza nascosta.
+#
+# Si pubblica il PDF, non il PNG: vettoriale, scala a qualunque dimensione.
+FIGURES = (
+    ("errore_predizione_*.pdf",      "prediction_error.pdf"),
+    ("biforcazione_centred_pillar.pdf", "bifurcation.pdf"),
+    ("horizon_sweep.pdf",            "horizon_sweep.pdf"),
+    ("pareto_front.pdf",             "pareto_front.pdf"),
+    # ("pannello2_*_merit.pdf",      "decision_plane.pdf"),   # non citata dal report
+)
 
 
 def gh(path: str, method: str = "GET", body: dict | None = None):
@@ -57,15 +77,49 @@ def main() -> int:
                     help="cartella di destinazione nel repo del report")
     ap.add_argument("--src", default=os.path.join(_HERE, "out", "tex"))
     ap.add_argument("--message", default=None)
+    ap.add_argument("--report", default=None,
+                    help="pubblica anche questo .tex, un livello sopra --dir")
+    ap.add_argument("--no-figures", action="store_true",
+                    help="pubblica solo i .tex, senza le figure")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    locali = {}
+    # percorso remoto COMPLETO -> contenuto
+    locali: dict[str, bytes] = {}
+    D = args.dir.rstrip("/")
     for name in FILES:
         p = os.path.join(args.src, name)
         if not os.path.exists(p):
             raise SystemExit(f"manca {p}: eseguire prima  python3 viz/results_tex.py")
-        locali[name] = open(p, "rb").read()
+        locali[f"{D}/{name}"] = open(p, "rb").read()
+
+    tab_dir = os.path.join(args.src, "tab")
+    for p in sorted(glob.glob(os.path.join(tab_dir, "*.tex"))):
+        locali[f"{D}/tab/" + os.path.basename(p)] = open(p, "rb").read()
+
+    if args.report:
+        if not os.path.exists(args.report):
+            raise SystemExit(f"manca {args.report}")
+        # un livello sopra --dir: Latex_noc/Metrics -> Latex_noc/Report_metrics.tex,
+        # che e' l'unico posto dove i percorsi relativi del report risolvono
+        # (\graphicspath{{Images/}}, \input{Configuration_files/...},
+        # \bibliography{bibliography} sono tutti relativi a quella cartella).
+        parent = os.path.dirname(D) or D
+        locali[f"{parent}/{os.path.basename(args.report)}"] = open(args.report, "rb").read()
+
+    if not args.no_figures:
+        figdir = os.path.dirname(os.path.abspath(args.src.rstrip("/")))
+        for pattern, stabile in FIGURES:
+            cand = sorted(glob.glob(os.path.join(figdir, pattern)),
+                          key=os.path.getmtime, reverse=True)
+            if not cand:
+                print(f"  [figura assente: {pattern} — sezione senza immagine]",
+                      file=sys.stderr)
+                continue
+            if len(cand) > 1:
+                print(f"  [{pattern}: {len(cand)} candidati, prendo il piu' recente "
+                      f"({os.path.basename(cand[0])})]", file=sys.stderr)
+            locali[f"{D}/fig/" + stabile] = open(cand[0], "rb").read()
 
     # Provenienza: si LEGGE da results.json, non si ricalcola.
     #
@@ -98,25 +152,36 @@ def main() -> int:
     base_tree = gh(f"/repos/{args.repo}/git/commits/{base_commit}")["tree"]["sha"]
 
     # Cosa e' gia' lassu': i file identici non vanno ricommittati.
-    esistenti = {}
-    try:
-        for item in gh(f"/repos/{args.repo}/contents/{args.dir}?ref={args.branch}"):
-            esistenti[item["name"]] = item["sha"]
-    except SystemExit:
-        pass                                    # la cartella non esiste ancora
+    def leggi_remoto(sub: str = "", base: str | None = None) -> None:
+        radice = D if base is None else base
+        percorso = f"{radice}/{sub}".rstrip("/")
+        try:
+            items = gh(f"/repos/{args.repo}/contents/{percorso}?ref={args.branch}")
+        except SystemExit:
+            return                              # la cartella non esiste ancora
+        for item in items:
+            rel = f"{radice}/{sub}{item['name']}"
+            if item["type"] == "dir":
+                leggi_remoto(f"{sub}{item['name']}/", base=radice)
+            else:
+                esistenti[rel] = item["sha"]
+
+    esistenti: dict[str, str] = {}
+    leggi_remoto()
+    if args.report:
+        leggi_remoto(base=os.path.dirname(D) or D)
 
     print(f"repo      {args.repo}  (branch {args.branch})")
     print(f"cartella  {args.dir}")
     print(f"messaggio {msg}\n")
 
     da_fare = []
-    for name, data in locali.items():
+    for name, data in sorted(locali.items()):
         # lo sha di git di un blob e' sha1("blob <len>\0" + contenuto)
-        import hashlib
         sha_locale = hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
         stato = ("invariato" if esistenti.get(name) == sha_locale
                  else ("aggiorna" if name in esistenti else "nuovo"))
-        print(f"  {stato:<10} {name:<26} {len(data)/1024:6.1f} KB")
+        print(f"  {stato:<10} {name:<44} {len(data)/1024:7.1f} KB")
         if stato != "invariato":
             da_fare.append((name, data))
 
@@ -132,7 +197,7 @@ def main() -> int:
     for name, data in da_fare:
         blob = gh(f"/repos/{args.repo}/git/blobs", "POST",
                   {"content": base64.b64encode(data).decode(), "encoding": "base64"})
-        entries.append({"path": f"{args.dir}/{name}", "mode": "100644",
+        entries.append({"path": name, "mode": "100644",
                         "type": "blob", "sha": blob["sha"]})
 
     tree = gh(f"/repos/{args.repo}/git/trees", "POST",

@@ -1668,11 +1668,79 @@ Quello che resta è di due tipi.
 | 20 | Insieme terminale come sottolivello di Lyapunov (DARE) | 1.2 | versione rigorosa del §10.9. Attenzione: il §10.14 mostra che un orizzonte di predizione lungo — che il vincolo terminale rigoroso richiederebbe — **costa prestazione**, non solo calcolo |
 | 16 | Omotopia su `obs_alpha` | 1.7, 2.5 | continuazione del §7.1.1; l'infrastruttura c'è (`decision_plane.py --set`) |
 
+**Bloccato su un'altra voce**
+
+| voce | §guida | Nota |
+|---|---|---|
+| Scelta del passo di campionamento argomentata dalla banda | 3.2 | vedi §10.18: sul profilo G1 il criterio spettrale è **vuoto**, non violato. Si sblocca identificando τ (§2.1) sotto fisica |
+
 **Esplicitamente escluso**: il move blocking, per le ragioni misurate del §10.15.
 
 ---
 
-### 10.18 Come verificare che tutto giri ancora
+### 10.18 Passo di campionamento: perché la trattazione spettrale oggi non si può fare
+
+Voce **rinviata**, non dimenticata: nel report per ora la sezione non c'è, e questa scheda
+dice cosa manca e perché.
+
+L'argomento standard (e quello che usa il gruppo *Contactless Surface Following*, che segue
+lo stesso corso) è spettrale: si prende il polo dominante dell'impianto, si sovracampiona di
+circa un ordine di grandezza, e si ricava il passo:
+
+```
+banda dell'impianto   ω_c
+regola pratica        ω_s ≈ 10 ω_c     ⇒   T_s = π / (5 ω_c)
+```
+
+Il nostro impianto sono tre lag del primo ordine disaccoppiati `v̇ = (u − v)/τ`, quindi il polo
+è in `−1/τ` e `ω_c = 1/τ`. Applicandolo ai due profili:
+
+| profilo | τ [s] | ω_c [rad/s] | T_s da regola | dt deployato | rapporto |
+|---|---|---|---|---|---|
+| Go2 | 0.12 | 8.33 (1.33 Hz) | **75 ms** | 100 ms | 1.3× |
+| G1 | 0.001 | 1000 (159 Hz) | **0.63 ms** | 200 ms | **318×** |
+
+**Sul Go2 l'argomento tiene** — regola e valore deployato coincidono a meno di un fattore 1.3.
+**Sul G1 è vuoto**, e non per un errore di taratura: il profilo mette τ → 0 *di proposito*,
+perché l'impianto MuJoCo è cinematico e integra il comando direttamente. Il lag discreto vale
+`1 − e^(−Δt/τ) = 1.000000` (§10.9), quindi `v(k+1) = u(k)` e **non esiste più un polo di
+attuazione da campionare**. Scrivere quella sezione adesso significherebbe applicare un
+criterio a cui abbiamo tolto l'ipotesi.
+
+**Cosa la sblocca**: identificare τ con il metodo dell'errore di simulazione (§2.1) sotto
+fisica, con la policy AMO nell'anello. Allora `ω_c` è una grandezza misurata e la sezione ha
+un contenuto invece di una formula.
+
+**Quello che nel frattempo si può già dire**, e che non dipende da τ: il passo è limitato da
+due condizioni indipendenti, una da sopra e una da sotto.
+
+1. **Superiore, geometrica.** Il termine di ostacolo è imposto solo negli `N+1` nodi; fra due
+   nodi la traiettoria continua è libera. Quindi `Δs = v_max · Δt ≤ β · r_obs`. Con β = 0.25:
+   `Δt ≤ 0.25 · 0.40 / 0.3 = 0.333 s`. Il deployato G1 è 0.20 s, cioè β = 0.15 — un passo
+   copre 6 cm e 3.44° contro un raggio di 40 cm.
+2. **Inferiore, computazionale.** `Δt ≥ t_solve,p95 / duty`. Misurato alla configurazione
+   deployata: p95 di 59.2 ms su `narrow_gap` e 30.9 ms su `u_trap`, cioè il 29.6 % e il 15.5 %
+   del periodo di 200 ms.
+
+Forcella: **0.06 s ≲ Δt ≤ 0.33 s**, deployato 0.20 s.
+
+> **Risultato collaterale, da non perdere: sul Go2 il controllo geometrico NON passa.**
+> `Δs = 1.0 · 0.1 = 0.100 m` contro `r_obs = 0.098 m`, cioè **Δs / r_obs = 1.02**: fra due nodi
+> consecutivi il robot percorre poco più dell'intero raggio di sicurezza, e la barriera può
+> essere scavalcata per intero. Il `Report.tex` attuale solleva esattamente questa
+> preoccupazione in `sec:barrier` (*«nothing forbids the continuous inter-sample trajectory
+> from clipping a thin obstacle»*) ma non la quantifica mai. Sul G1 il rapporto è 0.15.
+>
+> L'attenuante è nei nostri stessi dati: sul Go2 la barriera è una penalità morbida con
+> `r_obs` minuscolo, deliberatamente declassata dal tuning a rete di sicurezza dell'ultimo
+> metro, con l'evitamento geometrico delegato ad A\* sulla griglia inflazionata — coerente col
+> fatto che `W_obs = 0` completa comunque la missione. Ma significa che fra due nodi la
+> penalità non sta facendo nulla, e questo va detto in `sec:barrier` **indipendentemente** dal
+> fatto che la sezione sul passo di campionamento venga scritta o no.
+
+---
+
+### 10.19 Come verificare che tutto giri ancora
 
 ```bash
 source /opt/ros/humble/setup.bash && source install/setup.bash

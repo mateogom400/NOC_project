@@ -1,0 +1,22 @@
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{Optimality diagnostics at sampled cycles of the recorded run \resBag. ``active'' counts equalities and active bounds together; ``rank'' is the rank of the Jacobian of the active constraints, so LICQ holds when the two coincide.}
+  \label{res:tab:kkt}
+  \begin{tabular}{rrrrrcrr}
+    \toprule
+    cycle & $t$ [s] & active & of which bounds & rank & LICQ & cone dim. & $\lambda_{\min}$ proj. \\
+    \midrule
+    0 & 0 & 96 & 0 & 96 & yes & 45 & $8.78\times 10^{-1}$ \\
+    96 & 24 & 96 & 0 & 96 & yes & 45 & $8.78\times 10^{-1}$ \\
+    193 & 52 & 140 & 44 & 140 & yes & 1 & $7.18\times 10^{2}$ \\
+    290 & 78 & 113 & 17 & 113 & yes & 28 & $9.12\times 10^{-1}$ \\
+    387 & 110 & 120 & 24 & 120 & yes & 21 & $9.73\times 10^{-1}$ \\
+    483 & 153 & 135 & 39 & 135 & yes & 6 & $1.38\times 10^{0}$ \\
+    580 & 203 & 137 & 41 & 137 & yes & 4 & $2.34\times 10^{0}$ \\
+    677 & 252 & 137 & 41 & 137 & yes & 4 & $2.34\times 10^{0}$ \\
+    774 & 299 & 133 & 37 & 133 & yes & 8 & $1.32\times 10^{0}$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+

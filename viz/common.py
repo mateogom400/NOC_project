@@ -406,3 +406,25 @@ def ensure_mpl3d():
     if "3d" not in projection_registry._all_projection_types:
         register_projection(Axes3D)
     return Axes3D
+
+
+# ---------------------------------------------------------------------------
+# Salvataggio delle figure
+# ---------------------------------------------------------------------------
+def save_figure(fig, out_png: str, dpi: int = 130) -> list[str]:
+    """
+    Scrive la figura in PNG **e** in PDF, e restituisce i percorsi.
+
+    Il PNG serve per guardarla al volo; nel report va il PDF. Un raster a 130
+    dpi messo a piena larghezza su A4 e' visibilmente morbido, e accanto alle
+    figure vettoriali gia' presenti nel report la differenza si nota. Il PDF
+    e' vettoriale, scala a qualunque dimensione e di solito pesa meno.
+    """
+    import os
+    os.makedirs(os.path.dirname(out_png) or ".", exist_ok=True)
+    fig.savefig(out_png, dpi=dpi)
+    out_pdf = os.path.splitext(out_png)[0] + ".pdf"
+    # bbox_inches stretto: senza, il PDF porta i margini della figura e nel
+    # report resta un bordo bianco che nessun \includegraphics puo' togliere.
+    fig.savefig(out_pdf, bbox_inches="tight")
+    return [out_png, out_pdf]

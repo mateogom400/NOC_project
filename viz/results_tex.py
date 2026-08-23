@@ -232,6 +232,13 @@ class Macros:
             "",
             r"\providecommand{\resdef}[2]{\expandafter\def\csname #1\endcsname{#2}}",
             "",
+            "% Richiamo delle tabelle. Ognuna sta in un file suo sotto tab/, cosi'",
+            "% il report la include dove vuole e resta viva a ogni rigenerazione.",
+            "% Chi compila da un'altra cartella ridefinisce solo \\restabdir:",
+            "%     \\renewcommand{\\restabdir}{Metrics/tab}",
+            r"\providecommand{\restabdir}{tab}",
+            r"\providecommand{\restab}[1]{\input{\restabdir/#1}}",
+            "",
         ]
         for title, items in self._groups:
             if not items:
@@ -251,6 +258,19 @@ class Macros:
 # ---------------------------------------------------------------------------
 # Utilita' per le tabelle
 # ---------------------------------------------------------------------------
+# Le tabelle non vengono inlineate nel corpo: ognuna finisce in un file suo,
+# sotto tab/, e sia il documento di staging sia Report_metrics.tex la
+# richiamano con \restab{nome}. Una sola sorgente, due consumatori, e il
+# report resta vivo quando si rigenera.
+TABLES: dict[str, list[str]] = {}
+
+
+def _tabname(label: str) -> str:
+    """res:tab:solvercmp -> solvercmp ; res:tab:horizon:narrowgap -> horizon_narrowgap"""
+    name = label.replace("res:tab:", "").replace("res:", "")
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+
+
 def table(spec: str, header: list[str], rows: list[list[str]], caption: str,
           label: str, small: bool = True, note: str = "") -> list[str]:
     L = [r"\begin{table}[htbp]", r"  \centering"]
@@ -270,7 +290,8 @@ def table(spec: str, header: list[str], rows: list[list[str]], caption: str,
         L.append(r"  \\[2pt] {\footnotesize " + note + "}")
     L.append(r"\end{table}")
     L.append("")
-    return L
+    TABLES[_tabname(label)] = L
+    return ["\\restab{" + _tabname(label) + "}", ""]
 
 
 # ---------------------------------------------------------------------------
@@ -982,13 +1003,26 @@ def sec_horizon(extra: dict, M: Macros) -> list[str]:
     for r in rows_in:
         k = (int(r["N"]), round(float(r["dt"]), 4))
         a = agg.setdefault(k, {"t": [], "c": [], "p": [], "goal": True})
-        a["t"].append(float(r["tempo_al_goal_s"]))
-        a["c"].append(float(r["clearance_min"]))
-        a["p"].append(float(r["solve_ms_p95"]))
-        a["goal"] = a["goal"] and bool(r["goal_raggiunto"])
-    pts = [{"N": N, "dt": dtv, "T": N * dtv, "goal": a["goal"],
-            "t": sum(a["t"]) / len(a["t"]), "c": min(a["c"]), "p": max(a["p"])}
-           for (N, dtv), a in agg.items()]
+        # Una configurazione che NON arriva al goal non ha un tempo al goal:
+        # il campo e' null. Va escluso dalla media invece di essere convertito,
+        # e la configurazione va marcata come fallita — e' gia' cosi' che viene
+        # tenuta fuori dalla classifica di non dominanza.
+        t = r.get("tempo_al_goal_s")
+        if t is not None:
+            a["t"].append(float(t))
+        for campo, chiave in (("c", "clearance_min"), ("p", "solve_ms_p95")):
+            v = r.get(chiave)
+            if v is not None:
+                a[campo].append(float(v))
+        a["goal"] = a["goal"] and bool(r.get("goal_raggiunto"))
+    pts = []
+    for (N, dtv), a in agg.items():
+        if not a["t"] or not a["c"] or not a["p"]:
+            a["goal"] = False
+        pts.append({"N": N, "dt": dtv, "T": N * dtv, "goal": a["goal"],
+                    "t": sum(a["t"]) / len(a["t"]) if a["t"] else float("inf"),
+                    "c": min(a["c"]) if a["c"] else 0.0,
+                    "p": max(a["p"]) if a["p"] else float("inf")})
 
     def dominates(x, y):
         return (x["t"] <= y["t"] and x["c"] >= y["c"] and x["p"] <= y["p"]
@@ -1037,8 +1071,25 @@ def sec_horizon(extra: dict, M: Macros) -> list[str]:
         "",
     ]
     if banded:
-        worse = (sum(q["t"] for q in highb) / len(highb) >
-                 sum(q["t"] for q in lowb) / len(lowb))
+        t_lo = sum(q["t"] for q in lowb) / len(lowb)
+        t_hi = sum(q["t"] for q in highb) / len(highb)
+        c_lo, c_hi = min(q["c"] for q in lowb), min(q["c"] for q in highb)
+        worse = t_hi > t_lo
+        # Dire "peggio su entrambi i fronti" quando la clearance migliora e'
+        # falso: sono due assi, e vanno letti separatamente. Se poi la clearance
+        # e' nulla in entrambe le fasce, quell'asse non discrimina affatto e
+        # spacciarlo per un vantaggio sarebbe peggio che tacerlo.
+        both_graze = c_lo < 0.02 and c_hi < 0.02
+        if both_graze:
+            coda = ("--- and the clearance axis does not discriminate: both groups "
+                    "come within a couple of centimetres of an obstacle, so on these "
+                    "scenarios neither horizon is being solved safely and only the "
+                    "time is informative")
+        elif c_hi > c_lo:
+            coda = ("--- so it is a trade and not a dominance: the longer horizon buys "
+                    "clearance and pays for it in time")
+        else:
+            coda = "--- worse on both counts, not a trade"
         if worse:
             L += [
                 f"The headline is counter-intuitive and worth stating first: "
@@ -1046,8 +1097,8 @@ def sec_horizon(extra: dict, M: Macros) -> list[str]:
                 f"at $N\\Delta t=\\resHorizonSplit$~s, the short-horizon group reaches "
                 f"the goal in $\\resHorizonLowT$~s with a worst-case clearance of "
                 f"$\\resHorizonLowC$~m, against $\\resHorizonHighT$~s and "
-                f"$\\resHorizonHighC$~m for the long-horizon group --- worse on both "
-                f"counts, not a trade. The mechanism is the same one that produces the "
+                f"$\\resHorizonHighC$~m for the long-horizon group {coda}. "
+                f"The mechanism is the same one that produces the "
                 f"livelock elsewhere in the stack: the reference extends over a path the "
                 f"discrete planner will replan anyway, so a longer horizon commits the "
                 f"controller to tracking a target that is already due to change. "
@@ -1926,8 +1977,8 @@ def check(text: str, name: str) -> list[str]:
                 break
 
     # numero di colonne coerente fra specifica e righe
-    for m in re.finditer(r"\\begin\{tabular\}\{([^}]*)\}(.*?)\\end\{tabular\}",
-                         text, re.S):
+    for m in re.finditer(r"\\begin\{tabular\}\{((?:[^{}]|\{[^{}]*\})*)\}(.*?)"
+                         r"\\end\{tabular\}", text, re.S):
         spec, body = m.group(1), m.group(2)
         # via il contenuto delle graffe (p{...}, >{...}, @{...}): dentro ci sono
         # lettere che non sono colonne, \textwidth ne e' l'esempio classico
@@ -1940,15 +1991,19 @@ def check(text: str, name: str) -> list[str]:
             elif depth == 0:
                 bare.append(ch)
         ncol = len(re.findall(r"[lcrpmbX]", "".join(bare)))
-        for line in body.splitlines():
-            line = line.strip()
-            if not line.endswith(r"\\") or line.startswith("%"):
-                continue
-            got = len(re.split(r"(?<!\\)&", line)) 
+        # Una riga di tabella e' delimitata da \\, non dall'a-capo del sorgente:
+        # con colonne p{} il testo va a capo e ogni riga fisica sembrerebbe una
+        # riga di tabella con una cella sola. Si spezza quindi sul separatore.
+        senza_commenti = re.sub(r"(?<!\\)%.*", "", body)
+        for chunk in re.split(r"\\\\(?:\[[^\]]*\])?", senza_commenti):
+            chunk = chunk.strip()
+            if not chunk or chunk.startswith("\\") and "&" not in chunk:
+                continue                    # \toprule, \midrule, \bottomrule
+            got = len(re.split(r"(?<!\\)&", chunk))
             if got != ncol:
                 problems.append(
                     f"{name}: riga con {got} celle in un tabular da {ncol} "
-                    f"colonne: {line[:70]}")
+                    f"colonne: {' '.join(chunk.split())[:70]}")
     return problems
 
 
@@ -1962,7 +2017,7 @@ def check_cross(body: str, macros: str) -> list[str]:
     intercetta prima di scrivere.
     """
     problems = []
-    scaffold = {"resSec", "resSubsec", "resNote", "resdef"}
+    scaffold = {"resSec", "resSubsec", "resNote", "resdef", "restab", "restabdir"}
     definite = set(re.findall(r"\\resdef\{(res[A-Za-z]+)\}", macros))
     usate = set(re.findall(r"\\(res[A-Za-z]+)", body)) - scaffold
     for name in sorted(usate - definite):
@@ -2008,15 +2063,28 @@ def write_all(res: dict, out_dir: str, extra: dict | None = None) -> list[str]:
     """Genera i tre file e ne restituisce i percorsi. Solleva se il .tex e' rotto."""
     extra = extra or {}
     M = Macros()
+    TABLES.clear()                      # rigenerazioni ripetute nello stesso processo
     body = build_body(res, extra, M)
     macros = M.render(res["meta"])
+    tabelle = {k: "\n".join(v) + "\n" for k, v in TABLES.items()}
 
-    problems = (check(body, "metrics_body.tex") + check(macros, "metrics_macros.tex")
-                + check_cross(body, macros))
+    problems = check(body, "metrics_body.tex") + check(macros, "metrics_macros.tex")
+    for k, t in tabelle.items():
+        problems += check(t, f"tab/{k}.tex")
+    # il controllo incrociato deve vedere anche le didascalie: usano \resBag
+    problems += check_cross(body + "\n".join(tabelle.values()), macros)
     if problems:
         raise RuntimeError("LaTeX generato non valido:\n  " + "\n  ".join(problems))
 
     os.makedirs(out_dir, exist_ok=True)
+    tab_dir = os.path.join(out_dir, "tab")
+    os.makedirs(tab_dir, exist_ok=True)
+    # Le tabelle sparite da una rigenerazione all'altra vanno rimosse, o restano
+    # lassu' a farsi includere da un \restab che nessuno genera piu'.
+    for stale in os.listdir(tab_dir):
+        if stale.endswith(".tex") and stale[:-4] not in tabelle:
+            os.remove(os.path.join(tab_dir, stale))
+
     paths = []
     for name, text in (("metrics_macros.tex", macros),
                        ("metrics_body.tex", body),
@@ -2024,6 +2092,11 @@ def write_all(res: dict, out_dir: str, extra: dict | None = None) -> list[str]:
         p = os.path.join(out_dir, name)
         with open(p, "w") as fh:
             fh.write(text)
+        paths.append(p)
+    for k, t in sorted(tabelle.items()):
+        p = os.path.join(tab_dir, f"{k}.tex")
+        with open(p, "w") as fh:
+            fh.write(t)
         paths.append(p)
     return paths
 
@@ -2050,13 +2123,20 @@ def main() -> int:
     extra = {} if args.no_extra else load_extra(args.results)
 
     if args.check:
+        # Stessa assemblata della scrittura, comprese le tabelle: le \label
+        # ora vivono nei file tab/, quindi un controllo sul solo corpo
+        # riporterebbe come orfani tutti i \ref alle tabelle.
         M = Macros()
+        TABLES.clear()
         body = build_body(res, extra, M)
         macros = M.render(res["meta"])
-        problems = (check(body, "body") + check(macros, "macros")
-                    + check_cross(body, macros))
-        for p in problems:
-            print("  " + p, file=sys.stderr)
+        tabelle = {k: "\n".join(v) + "\n" for k, v in TABLES.items()}
+        problems = check(body, "body") + check(macros, "macros")
+        for k, t in tabelle.items():
+            problems += check(t, f"tab/{k}.tex")
+        problems += check_cross(body + "\n".join(tabelle.values()), macros)
+        for pr in problems:
+            print("  " + pr, file=sys.stderr)
         print("verifica fallita" if problems else "verifica superata")
         return 1 if problems else 0
 

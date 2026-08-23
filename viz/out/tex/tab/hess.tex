@@ -1,0 +1,15 @@
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{Interior-point iterations with the exact Hessian and with the limited-memory quasi-Newton approximation, on the same instance.}
+  \label{res:tab:hess}
+  \begin{tabular}{lrrrl}
+    \toprule
+    Hessian & iterations & solve [ms] & $J^\star$ & status \\
+    \midrule
+    exact Hessian & 20 & 187.5 & $9244$ & \texttt{Solve\_Succeeded} \\
+    L-BFGS & 36 & 295.4 & $9244$ & \texttt{Solve\_Succeeded} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+

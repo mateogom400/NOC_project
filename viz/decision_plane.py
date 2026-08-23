@@ -305,7 +305,7 @@ def main() -> int:
     os.makedirs(OUT, exist_ok=True)
     out = os.path.join(OUT, f"pannello2_{sc.name}"
                             f"{'_obj' if args.objective else '_merit'}.png")
-    fig.savefig(out, dpi=140)
+    common.save_figure(fig, out, 140)
     print(f"salvato: {out}")
     if not (args.no_show or not os.environ.get("DISPLAY")):
         plt.show()

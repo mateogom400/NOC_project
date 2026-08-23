@@ -20,6 +20,13 @@
 
 \providecommand{\resdef}[2]{\expandafter\def\csname #1\endcsname{#2}}
 
+% Richiamo delle tabelle. Ognuna sta in un file suo sotto tab/, cosi'
+% il report la include dove vuole e resta viva a ogni rigenerazione.
+% Chi compila da un'altra cartella ridefinisce solo \restabdir:
+%     \renewcommand{\restabdir}{Metrics/tab}
+\providecommand{\restabdir}{tab}
+\providecommand{\restab}[1]{\input{\restabdir/#1}}
+
 % --- provenienza e profilo -----------------------------------------------
 \resdef{resCommit}{158985edb8} % commit corto
 \resdef{resBranch}{G1\_optimal\_trajectory} % branch
@@ -164,19 +171,19 @@
 
 % --- campagna orizzonte (N, dt) ------------------------------------------
 \resdef{resHorizonBudget}{125}    % budget di ciclo [ms]
-\resdef{resHorizonOverBudget}{1}  % configurazioni oltre budget
-\resdef{resHorizonConfigs}{12}    % configurazioni provate
-\resdef{resHorizonDepTail}{59.2}  % p95 peggiore della configurazione deployata [ms]
+\resdef{resHorizonOverBudget}{0}  % configurazioni oltre budget
+\resdef{resHorizonConfigs}{40}    % configurazioni provate
+\resdef{resHorizonDepTail}{34.1}  % p95 peggiore della configurazione deployata [ms]
 \resdef{resHorizonNondom}{5}      % configurazioni non dominate
 \resdef{resHorizonDepNondom}{no}
 \resdef{resHorizonSplit}{6}       % soglia della fascia [s]
-\resdef{resHorizonLowT}{11.1}
+\resdef{resHorizonLowT}{11.0}
 \resdef{resHorizonLowC}{0.000}
-\resdef{resHorizonHighT}{18.8}
-\resdef{resHorizonHighC}{0.017}
-\resdef{resHorizonCheapN}{8}
-\resdef{resHorizonCheapDt}{0.40}
-\resdef{resHorizonCheapPtail}{25.7} % p95 della piu' economica [ms]
+\resdef{resHorizonHighT}{22.7}
+\resdef{resHorizonHighC}{0.009}
+\resdef{resHorizonCheapN}{5}
+\resdef{resHorizonCheapDt}{0.20}
+\resdef{resHorizonCheapPtail}{11.6} % p95 della piu' economica [ms]
 
 % --- orizzonte di controllo N_c ------------------------------------------
 \resdef{resNcCases}{10}     % configurazioni provate
@@ -185,16 +192,15 @@
 \resdef{resNcFreeCases}{3}  % casi in cui il taglio dei gradi di liberta' e' gratis
 
 % --- fronte di Pareto multi-obiettivo ------------------------------------
-\resdef{resParetoPoints}{10}       % scalarizzazioni provate
+\resdef{resParetoPoints}{21}       % scalarizzazioni provate
 \resdef{resParetoNondom}{2}        % punti non dominati
 \resdef{resParetoConvex}{yes}
 \resdef{resParetoChosen}{(0.0,\ 0.0,\ 1.0)} % scalarizzazione scelta
-\resdef{resParetoSpreadAcc}{2.73\times 10^{-3}} % escursione dell'accuratezza [m]
-\resdef{resParetoSpreadEffort}{6.27\times 10^{-3}}
+\resdef{resParetoSpreadAcc}{1.04\times 10^{-2}} % escursione dell'accuratezza [m]
+\resdef{resParetoSpreadEffort}{6.50\times 10^{-3}}
 \resdef{resParetoSpreadTime}{0.40} % escursione del tempo al goal [s]
-\resdef{resParetoRelAcc}{13.4}     % escursione relativa: accuratezza [%]
-\resdef{resParetoRelEffort}{7.1}   % escursione relativa: sforzo [%]
+\resdef{resParetoRelAcc}{50.6}     % escursione relativa: accuratezza [%]
+\resdef{resParetoRelEffort}{7.4}   % escursione relativa: sforzo [%]
 \resdef{resParetoRelTime}{4.3}     % escursione relativa: tempo [%]
-\resdef{resParetoInformative}{no}
-\resdef{resParetoBaryNondom}{no}   % il baricentro (taratura attuale) e' non dominato
+\resdef{resParetoInformative}{yes}
 

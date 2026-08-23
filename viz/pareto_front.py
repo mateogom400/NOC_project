@@ -294,7 +294,7 @@ def main() -> int:
     fig.suptitle("Multi-obiettivo sui tre pesi della eq. (7.5)", fontsize=11)
     fig.tight_layout()
     out = os.path.join(out_dir, "pareto_front.png")
-    fig.savefig(out, dpi=130)
+    common.save_figure(fig, out, 130)
     print(f"\nsalvati:\n  {out}\n  {os.path.join(out_dir,'pareto_front.json')}")
     if not args.no_show:
         plt.show()
