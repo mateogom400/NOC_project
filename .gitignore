@@ -28,3 +28,4 @@ assets/*.mp4
 # Restano fuori solo le GIF, troppo pesanti (~7 MB l'una) e rigenerabili.
 viz/out/**/*.gif
 viz/bags/
+.venv-viz/
