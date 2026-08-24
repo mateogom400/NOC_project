@@ -1,6 +1,28 @@
 [
   {
     "regime": "penalty (ostacoli nel costo)",
+    "caso": "bag ciclo 664",
+    "n": 141,
+    "m": 156,
+    "n_ineq": 60,
+    "ipopt": {
+      "ok": true,
+      "f": 881.9993467522354,
+      "iter": 21,
+      "ms": 49.38854099987111,
+      "status": "Solve_Succeeded"
+    },
+    "sqp": {
+      "ok": false,
+      "f": NaN,
+      "iter": -1,
+      "ms": 1655.685290999827,
+      "status": ".../casadi/core/conic.cpp:558: conic process failed. Set 'er"
+    },
+    "stesso_minimo": false
+  },
+  {
+    "regime": "penalty (ostacoli nel costo)",
     "caso": "centred_pillar",
     "n": 141,
     "m": 156,
@@ -9,17 +31,61 @@
       "ok": true,
       "f": 9244.06079260452,
       "iter": 15,
-      "ms": 44.71189800005959,
+      "ms": 34.48719500011066,
       "status": "Solve_Succeeded"
     },
     "sqp": {
       "ok": true,
       "f": 9244.060946498346,
       "iter": 6,
-      "ms": 151.33829600017634,
+      "ms": 138.2763070000692,
       "status": "Solve_Succeeded"
     },
     "stesso_minimo": true
+  },
+  {
+    "regime": "penalty (ostacoli nel costo)",
+    "caso": "narrow_gap",
+    "n": 141,
+    "m": 156,
+    "n_ineq": 60,
+    "ipopt": {
+      "ok": true,
+      "f": 269.8924684868441,
+      "iter": 16,
+      "ms": 46.517137000137154,
+      "status": "Solve_Succeeded"
+    },
+    "sqp": {
+      "ok": true,
+      "f": 269.8876719666888,
+      "iter": 6,
+      "ms": 348.242657000128,
+      "status": "Solve_Succeeded"
+    },
+    "stesso_minimo": true
+  },
+  {
+    "regime": "l1 (ostacoli come vincoli)",
+    "caso": "bag ciclo 664",
+    "n": 261,
+    "m": 396,
+    "n_ineq": 300,
+    "ipopt": {
+      "ok": true,
+      "f": 0.5627987045006588,
+      "iter": 21,
+      "ms": 75.88533199987069,
+      "status": "Solve_Succeeded"
+    },
+    "sqp": {
+      "ok": true,
+      "f": 0.5735560702773268,
+      "iter": 11,
+      "ms": 5215.7838719999745,
+      "status": "Solve_Succeeded"
+    },
+    "stesso_minimo": false
   },
   {
     "regime": "l1 (ostacoli come vincoli)",
@@ -31,16 +97,38 @@
       "ok": true,
       "f": 17414.033157550377,
       "iter": 21,
-      "ms": 70.6674410002961,
+      "ms": 111.81023399990409,
       "status": "Solve_Succeeded"
     },
     "sqp": {
       "ok": true,
       "f": 17414.05230175045,
       "iter": 7,
-      "ms": 4813.144146000013,
+      "ms": 4999.717633999808,
       "status": "Solve_Succeeded"
     },
     "stesso_minimo": true
+  },
+  {
+    "regime": "l1 (ostacoli come vincoli)",
+    "caso": "narrow_gap",
+    "n": 261,
+    "m": 396,
+    "n_ineq": 300,
+    "ipopt": {
+      "ok": true,
+      "f": 0.5880222350511701,
+      "iter": 12,
+      "ms": 45.33362000006491,
+      "status": "Solve_Succeeded"
+    },
+    "sqp": {
+      "ok": true,
+      "f": 0.5999500677331232,
+      "iter": 1,
+      "ms": 453.39682799999537,
+      "status": "Solve_Succeeded"
+    },
+    "stesso_minimo": false
   }
 ]
