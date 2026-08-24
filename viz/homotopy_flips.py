@@ -15,22 +15,20 @@ sides.  This script measures how often that happens.
 
 The measurement is a *signature*, not a heuristic.  Obstacle points are grouped
 into connected clusters; for every cluster the reference passes near, we record
-which side it passes on, read as a lateral offset at the cluster's longitudinal
-station in the fixed start-to-goal frame (see `signature` for why the two more
+which side it passes on, read as a lateral offset at the landmark's longitudinal
+station in the fixed start-to-goal frame (see `signature` for why the more
 obvious definitions are confounded by the rolling horizon).
 
 A flip is any cluster that is engaged by two consecutive references and whose
 sign differs between them.  Clusters engaged by only one of the two are ignored:
 entering or leaving the planning window is not a change of mind.
 
-KNOWN LIMITATION -- extended obstacles.  A cluster is represented by its
-centroid, which is a good landmark for a compact obstacle (a pillar, a U-shaped
-trap) and a poor one for a wall running parallel to the direction of travel: the
-path is alongside it for its whole length, so the "station of the centroid" is
-arbitrary and the recorded offset can exceed the free width of the corridor.
-Trust the count on compact clusters; on `corridor`, whose two long walls are of
-this kind, treat it as not yet validated.  The fix is to landmark each cluster by
-the point nearest the reference instead of by its centroid.
+Each cluster is landmarked by the obstacle point nearest the reference, so the
+measure behaves the same on a compact pillar and on a wall running parallel to
+the direction of travel.  The recorded magnitude is the lateral offset at the
+landmark's station; read it together with the sign, because a large offset is
+itself informative -- on `corridor` it is how one sees that A* is routing around
+the OUTSIDE of the corridor walls rather than through the passage.
 
 Usage:
     python3 viz/homotopy_flips.py                          # all four scenarios
@@ -77,6 +75,11 @@ def cluster_obstacles(obs: np.ndarray, link: float = LINK_M) -> np.ndarray:
     return labels
 
 
+def clusters_of(obs: np.ndarray, labels: np.ndarray) -> list:
+    """The obstacle points of each cluster, in label order."""
+    return [np.asarray(obs, dtype=float)[labels == k] for k in np.unique(labels)]
+
+
 def centroids_of(obs: np.ndarray, labels: np.ndarray) -> np.ndarray:
     return np.array([obs[labels == k].mean(axis=0) for k in np.unique(labels)])
 
@@ -102,34 +105,39 @@ def winding(ref: np.ndarray, c: np.ndarray) -> float:
 MIN_SWEEP_RAD = 0.5
 
 
-def signature(ref: np.ndarray, centroids: np.ndarray,
+def signature(ref: np.ndarray, clusters: list,
               origin: np.ndarray, axis: np.ndarray,
-              engage: float = ENGAGE_M) -> dict[int, tuple[int, float]]:
+              engage: float = ENGAGE_M) -> dict:
     """
     Which side of each engaged cluster this reference passes on.
 
     The side is read in a frame FIXED for the whole mission: the mission axis
-    from the start pose to the goal.  For each cluster we take the longitudinal
-    station of its centroid, find where the reference crosses that station, and
-    compare the two lateral offsets.  side = +1 when the reference passes to the
-    left of the obstacle, -1 to the right.
+    from the start pose to the goal.  Each cluster is landmarked by the obstacle
+    point NEAREST the reference; we find where the reference crosses that point's
+    longitudinal station, and compare the two lateral offsets.  side = +1 when
+    the reference passes to the left of the obstacle, -1 to the right, and the
+    recorded magnitude is the lateral clearance at that station.
 
-    Why not something simpler.  Two natural definitions are both confounded by
+    Why the landmark is the nearest point and not the centroid.  A centroid is a
+    good landmark for a compact obstacle and a bad one for a wall running
+    parallel to the direction of travel: the path is alongside such a wall for
+    its whole length, so the centroid's station is arbitrary, and the offset read
+    there can exceed the free width of the corridor.  The nearest point is well
+    defined in both cases and degenerates to the near face of a pillar.
+
+    Why not something simpler still.  Two natural definitions are confounded by
     the rolling horizon, and were measured to be so on these scenarios:
 
-      * the sign of cross(tangent, centroid - closest point) flips whenever the
+      * the sign of cross(tangent, obstacle - closest point) flips whenever the
         path merely curves, without changing side;
-      * the sign of the winding angle around the centroid flips as the robot
-        advances PAST the centroid, so it encodes longitudinal progress rather
-        than a decision -- on `corridor` it made all three clusters flip on the
-        same cycle, which is the signature of the frame moving, not of A*
-        changing its mind.
+      * the sign of the winding angle around the obstacle flips as the robot
+        advances PAST it, so it encodes longitudinal progress rather than a
+        decision -- on `corridor` it made all three clusters flip on the same
+        cycle, which is the signature of the frame moving, not of A* changing
+        its mind.
 
-    Reading the offset at a fixed station removes both: the value only changes
-    when A* actually re-routes.
-
-    A cluster is engaged when the reference spans its station and passes within
-    `engage` of the centroid.
+    Reading a lateral offset at a fixed station removes both: the value only
+    changes when A* actually re-routes.
     """
     ref = np.atleast_2d(np.asarray(ref, dtype=float))[:, :2]
     if len(ref) < 2:
@@ -139,25 +147,40 @@ def signature(ref: np.ndarray, centroids: np.ndarray,
     s_ref = (ref - origin) @ axis          # longitudinal station of each sample
     y_ref = (ref - origin) @ normal        # lateral offset of each sample
 
-    sig: dict[int, tuple[int, float]] = {}
-    for i, c in enumerate(centroids):
-        if np.linalg.norm(ref - c, axis=1).min() > engage:
+    sig: dict = {}
+    for i, pts in enumerate(clusters):
+        if len(pts) == 0:
             continue
-        s_c = float((c - origin) @ axis)
-        y_c = float((c - origin) @ normal)
+        # landmark: the obstacle point closest to this reference
+        d = np.linalg.norm(ref[:, None, :] - pts[None, :, :], axis=2)
+        if d.min() > engage:
+            continue
+        q = pts[int(np.argmin(d.min(axis=0)))]
 
-        # the reference must actually cross the obstacle's station
-        k = np.nonzero((s_ref[:-1] - s_c) * (s_ref[1:] - s_c) <= 0.0)[0]
+        # The reference must go PAST the whole obstacle, not merely alongside it.
+        # Travelling beside a corridor wall is not a left/right decision: the
+        # robot is between the walls whatever it decides.  Requiring the path to
+        # span the cluster longitudinally keeps only the obstacles it goes
+        # around, which are the ones a discrete choice is actually made about.
+        s_pts = (pts - origin) @ axis
+        if not (s_ref.min() <= s_pts.min() and s_ref.max() >= s_pts.max()):
+            continue
+
+        s_q = float((q - origin) @ axis)
+        y_q = float((q - origin) @ normal)
+
+        # the reference must actually cross the landmark's station
+        k = np.nonzero((s_ref[:-1] - s_q) * (s_ref[1:] - s_q) <= 0.0)[0]
         if k.size == 0:
             continue
         j = int(k[-1])                      # the last crossing, nearest the goal
         ds = s_ref[j + 1] - s_ref[j]
-        w = 0.0 if abs(ds) < 1e-12 else (s_c - s_ref[j]) / ds
+        w = 0.0 if abs(ds) < 1e-12 else (s_q - s_ref[j]) / ds
         y_cross = float(y_ref[j] + w * (y_ref[j + 1] - y_ref[j]))
 
-        offset = y_cross - y_c
+        offset = y_cross - y_q
         if abs(offset) < 1e-6:
-            continue                        # exactly through the centroid
+            continue                        # exactly through the landmark
         sig[i] = (1 if offset > 0 else -1, abs(offset))
     return sig
 
@@ -170,7 +193,7 @@ def legacy_side(ref) -> int:
     return 1 if r[:, 1].max() > abs(r[:, 1].min()) else -1
 
 
-def flips_from_history(refs, centroids, origin, axis, engage=ENGAGE_M) -> dict:
+def flips_from_history(refs, clusters, origin, axis, engage=ENGAGE_M) -> dict:
     """Walk the per-cycle reference history and count homotopy-class changes."""
     prev_sig, prev_cycle = None, None
     flips, events, sig_trace = 0, [], []
@@ -184,7 +207,7 @@ def flips_from_history(refs, centroids, origin, axis, engage=ENGAGE_M) -> dict:
             continue
         seen = np.asarray(ref, dtype=float)
 
-        sig = signature(seen, centroids, origin, axis, engage)
+        sig = signature(seen, clusters, origin, axis, engage)
         sig_trace.append({"cycle": k,
                           "sides": {str(i): s for i, (s, _) in sig.items()},
                           "offset": {str(i): round(c, 3) for i, (_, c) in sig.items()}})
@@ -203,19 +226,24 @@ def flips_from_history(refs, centroids, origin, axis, engage=ENGAGE_M) -> dict:
 
 
 def run_scenario(name: str, cfg, raw, steps: int, replan_every: int,
-                 engage: float, link: float) -> dict:
+                 engage: float, link: float, delta=None) -> dict:
     sc = common.get_scenario(name)
     tracker = common.make_tracker(cfg)
+    sel = None
+    if delta is not None:
+        from gap_selector import HomotopySelector
+        sel = HomotopySelector(sc.pose, sc.goal, sc.obstacles, delta=delta,
+                               d_ref=cfg.obs_r, engage=engage, link=link)
     hist = common.closed_loop(tracker, sc, steps=steps, raw=raw,
-                              replan_every=replan_every)
+                              replan_every=replan_every, plan_fn=sel)
 
     labels = cluster_obstacles(sc.obstacles, link)
-    cent = centroids_of(sc.obstacles, labels)
+    cl = clusters_of(sc.obstacles, labels)
 
     origin = np.asarray(sc.pose[:2], dtype=float)
     axis = np.asarray(sc.goal, dtype=float) - origin
     axis = axis / max(float(np.linalg.norm(axis)), 1e-9)
-    res = flips_from_history(hist["ref"], cent, origin, axis, engage)
+    res = flips_from_history(hist["ref"], cl, origin, axis, engage)
 
     # the old heuristic, on the same history, for the record
     sides = np.array([legacy_side(r) for r in hist["ref"]])
@@ -225,7 +253,7 @@ def run_scenario(name: str, cfg, raw, steps: int, replan_every: int,
     pose = np.asarray(hist["pose"], dtype=float)
     res.update({
         "scenario": name,
-        "clusters": int(len(cent)),
+        "clusters": int(len(cl)),
         "cycles": int(len(pose)),
         "goal_reached": bool(np.linalg.norm(pose[-1, :2] - sc.goal) < 0.35),
         "final_distance_m": round(float(np.linalg.norm(pose[-1, :2] - sc.goal)), 3),
@@ -233,6 +261,8 @@ def run_scenario(name: str, cfg, raw, steps: int, replan_every: int,
         "success_rate": round(float(np.mean(hist["success"])), 3),
         "solve_ms_p95": round(float(np.percentile(hist["solve_ms"], 95)), 1),
     })
+    if sel is not None:
+        res["selector"] = dict(sel.stats, delta=delta)
     return res
 
 
@@ -250,6 +280,9 @@ def main() -> int:
                     help="distance below which two obstacle points are one object [m]")
     ap.add_argument("--set", dest="overrides", action="append", default=[],
                     metavar="KEY=VALUE")
+    ap.add_argument("--hysteresis", type=float, default=None, metavar="DELTA",
+                    help="enable the pre-selection layer with switching margin "
+                         "DELTA (0 reproduces the current behaviour)")
     ap.add_argument("--out", default=os.path.join(OUT, "homotopy_flips.json"))
     args = ap.parse_args()
 
@@ -263,7 +296,7 @@ def main() -> int:
     rows = []
     for n in names:
         r = run_scenario(n, cfg, raw, args.steps, args.replan_every,
-                         args.engage, args.link)
+                         args.engage, args.link, args.hysteresis)
         rows.append(r)
         print(f"  {n:<16} clusters {r['clusters']:>2} · replans {r['replans']:>3} · "
               f"FLIPS {r['flips']:>2} (legacy {r['legacy_flips']:>2}) · "
