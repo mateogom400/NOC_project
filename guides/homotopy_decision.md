@@ -172,7 +172,56 @@ Three readings:
 
 ---
 
-## 4. What to expect, and what not to
+## 4. Current results, in pictures
+
+Both figures come from `viz/homotopy_figure.py`. Panel (a) is the planner as deployed,
+panel (b) the same mission with the pre-selection layer at `delta = 0.5`. Every A\* reference
+produced during the mission is drawn, coloured by which side of the obstacle it passes on;
+the executed trajectory is the black curve.
+
+### The improvement, at a horizon long enough to see it
+
+![Before and after at N=40](../viz/out/homotopy_u_trap_N40.png)
+
+*`viz/out/homotopy_u_trap_N40.png` — also available as `.pdf`. Regenerate with
+`python3 viz/homotopy_figure.py --no-show`.*
+
+Read it left to right. In (a) the first reference goes over the top of the U, then A\* changes
+its mind and every subsequent reference goes underneath; the robot commits to the longer route
+round the bottom and scrapes the obstacle at 9 mm. In (b) the class is decided once and held:
+one colour, the short way over the top, with real clearance.
+
+| | flips | path | min. clearance | solved cycles |
+|---|---|---|---|---|
+| as deployed | 1 | 6.65 m | 0.009 m | 99 % |
+| with pre-selection | **0** | **5.32 m** | **0.113 m** | **100 %** |
+
+Path 20 % shorter, clearance 12× larger, no failed solves. Same scenario, same weights, same
+everything else: the only difference is that the reference stopped changing class.
+
+### The same mission at the deployed horizon
+
+![Before and after at N=15](../viz/out/homotopy_u_trap_deployed.png)
+
+*`viz/out/homotopy_u_trap_deployed.png`. Regenerate with
+`python3 viz/homotopy_figure.py --no-show --set mpc_N=15 --tag deployed`.*
+
+This one needs reading carefully, and is the reason §5 exists.
+
+The references flip between blue and orange in (a) and are all blue in (b), so the layer is
+doing its job. But **the black curve is identical in both panels**, and it is a straight line
+from start to goal that passes clean through the back wall of the U. Clearance 0.000 m.
+
+That is not the layer failing. At `N = 15` the horizon covers about 0.6 m, the obstacle is
+further away than that, so the barrier never sees it; the harness then drives at the goal with
+a proportional controller, and the kinematic plant has no collision. It is a property of the
+test bench, not of the controller, and it is exactly why the deployed-horizon configuration
+cannot demonstrate any benefit. **Do not show this figure without that explanation**, and do
+not quote a closed-loop number from this harness at `N = 15`.
+
+---
+
+## 5. What to expect, and what not to
 
 ### At the deployed horizon the fix changes nothing in the trajectory
 
@@ -205,7 +254,7 @@ outer proportional loop, not the MPC.** This is the same limitation already decl
 
 ---
 
-## 5. What is not established
+## 6. What is not established
 
 Listed in rough order of how much they weaken the result.
 
@@ -235,7 +284,7 @@ Listed in rough order of how much they weaken the result.
 
 ---
 
-## 6. What could be improved, in order
+## 7. What could be improved, in order
 
 | # | Work | Effort | Why |
 |---|---|---|---|
@@ -247,7 +296,7 @@ Listed in rough order of how much they weaken the result.
 
 ---
 
-## 7. Files
+## 8. Files
 
 | File | What |
 |---|---|
@@ -270,7 +319,7 @@ Note on matplotlib: the figure code needs **3.10.x**. On 3.11 the 3-D panels fai
 
 ---
 
-## 8. Where it is in the report
+## 9. Where it is in the report
 
 Subsection **`sec:homotopy`**, "Where the discrete choice is actually made", placed
 immediately after `sec:bif`, of which it is the continuation: `sec:bif` proves the program has
