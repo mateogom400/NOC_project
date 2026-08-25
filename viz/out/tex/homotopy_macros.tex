@@ -1,0 +1,39 @@
+% ========================================================================
+% homotopy_macros.tex — GENERATED, DO NOT EDIT BY HAND
+%   regenerate with: python3 viz/homotopy_flips.py && python3 viz/homotopy_lock.py
+%   sources: viz/out/homotopy_flips.json, viz/out/homotopy_lock*.json
+%
+%   Until results_tex.py emits these, the block is produced by
+%   viz/homotopy_tex.py (see the note at the end of this file).
+% ========================================================================
+
+% The section also uses macros already defined in metrics_macros.tex:
+%   \resN  \resHorizonSeconds  \resVref  \resWobsDep
+% and the preamble commands \astar  \Wobs.  It defines nothing of its own
+% beyond the block below.
+
+% --- the measurement (homotopy_flips.json) -------------------------------
+\resdef{resHomoFlipsUtrap}{3}          % flips, u_trap, deployed profile
+\resdef{resHomoFlipsCorridor}{5}       % flips, corridor
+\resdef{resHomoReplansUtrap}{12}       % A* re-plans in the u_trap mission
+\resdef{resHomoOffsetUtrap}{2.0}       % lateral offset at every u_trap flip [m]
+\resdef{resHomoEngage}{1.5}            % engagement radius [m]
+\resdef{resHomoLink}{0.30}             % cluster link distance [m]
+
+% --- the layer (homotopy_lock.json) --------------------------------------
+\resdef{resHomoFlipsUtrapLock}{0}      % flips with the layer, u_trap
+\resdef{resHomoFlipsCorridorLock}{1}   % flips with the layer, corridor
+\resdef{resHomoDeltaDep}{0.5}          % hysteresis margin in use [m]
+\resdef{resHomoDeltaSat}{0.25}         % margin above which behaviour is constant
+\resdef{resHomoDeltaMax}{20}           % largest margin tried, no degradation
+\resdef{resHomoDref}{0.45}             % d_ref in the route score [m]
+\resdef{resHomoWclear}{6.0}            % w_clear in the route score
+
+% --- the long-horizon arm (homotopy_lock_sweep_u_trap_N40.json) ----------
+\resdef{resHomoNlong}{40}
+\resdef{resHomoPathOff}{6.65}
+\resdef{resHomoPathLock}{5.32}
+\resdef{resHomoClearOff}{0.009}
+\resdef{resHomoClearLock}{0.113}
+\resdef{resHomoSuccOff}{99}
+\resdef{resHomoSuccLock}{100}

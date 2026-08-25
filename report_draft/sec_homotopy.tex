@@ -1,0 +1,111 @@
+% ---------------------------------------------------------------------------
+% Draft subsection for Report_metrics.tex.
+% Place it immediately after \subsection{Regularity of the solution and the
+% left--right bifurcation} (sec:bif), of which it is the continuation.
+%
+% Numbers come from viz/out/homotopy_flips.json and viz/out/homotopy_lock*.json
+% through the macros in homotopy_macros.tex and the tables tab/homotopy.tex and
+% tab/homotopydelta.tex.  Nothing below is typed by hand.
+% ---------------------------------------------------------------------------
+
+\subsection{Where the discrete choice is actually made}
+\label{sec:homotopy}
+
+Section~\ref{sec:bif} closes on a negative result: at the deployed weight the cost landscape does not
+bifurcate, the minimiser is unique, and the control law is regular in $x_0$. That settles what the program
+does, and it raises the question the program cannot answer. Passing an obstacle on the left and passing it on
+the right are distinct manoeuvres; something in the stack decides between them. If the nonlinear program has
+a single minimum, the decision is not taken there.
+
+The course anticipates the situation. Discussing mixed-integer programs, the notes observe that a large
+number of integer variables is to be avoided and that, in optimal control, one can instead
+\emph{pre-select a switching strategy with continuous tuning parameters}, trading degrees of freedom against
+the complexity of the resulting program.\footnote{Lecture notes, \S4.2.6.} That is precisely the architecture
+of this stack, and it has never been claimed as a design choice: ``which side do I pass on'' is the integer
+variable the formulation refuses to carry, and it is delegated to the \astar{} layer of
+Section~\ref{sec:astar}, which re-plans on a freshly inflated grid every few control cycles. The price of
+keeping the program smooth is that the discrete decision is made somewhere that has no obligation to be
+consistent with itself.
+
+\paragraph{Measuring the consistency of the delegated choice.}
+Obstacle returns are grouped into connected clusters, and for every cluster the reference passes, we record
+which side it passes on. The side is read as a lateral offset at the cluster's longitudinal station, in the
+frame fixed by the start pose and the goal; the landmark is the obstacle point nearest the reference, which
+behaves alike on a compact pillar and on a wall running parallel to the direction of travel. A \emph{flip} is
+a cluster engaged by two consecutive references whose side differs between them; clusters engaged by only one
+of the two are ignored, since entering or leaving the planning window is not a change of mind.
+
+Two more obvious definitions were tried first and both proved to measure the wrong thing. The sign of the
+cross product between the path tangent and the obstacle at closest approach changes whenever the path merely
+curves. The winding angle about the obstacle --- the homotopy invariant of a \emph{fixed} path --- changes as
+the robot advances past it, so under a receding horizon it encodes longitudinal progress rather than a
+decision, and made every cluster of one scenario flip on the same cycle. Reading the offset at a fixed
+station is insensitive to both.
+
+\restab{homotopy}
+
+On the trap scenario the reference changes side $\resHomoFlipsUtrap$ times in $\resHomoReplansUtrap$
+re-plans, and the recorded offset is $\resHomoOffsetUtrap$~m at every one of them: the sign alternates while
+the magnitude does not, so each flip translates the reference by twice that distance across a stationary
+obstacle. On the corridor the count is $\resHomoFlipsCorridor$, and the offsets show why --- the planner is
+routing around the \emph{outside} of the corridor walls and alternating which side it leaves by. The two
+control scenarios measure zero, correctly: through a narrow gap and around a single pillar the choice, once
+made, is never revisited.
+
+\paragraph{The consequence is gated by the horizon.}
+At the deployed tuning these flips cost nothing. With the layer of the next paragraph enabled, the executed
+trajectory of the trap scenario is identical to the baseline in every digit --- same length, same clearance,
+same number of cycles --- while the flip count falls to zero. The explanation is the horizon of
+Section~\ref{sec:horizon}: as already noted in Section~\ref{sec:fhocp}, $N\Delta t=\resHorizonSeconds$~s at a
+cruise speed of $\resVref$~m/s spans well under a metre of travel, and the two routes do not separate within
+that distance. The reference moves several
+metres sideways and the controller never sees it, because the divergence lies beyond the last predicted node.
+The instability is real and, at this tuning, invisible --- which is a different statement from harmless, and
+the next paragraph separates the two.
+
+\paragraph{Pre-selection with hysteresis.}
+The remedy follows the notes' prescription literally: make the switching strategy explicit and give it a
+continuous parameter. At each re-plan the new \astar{} route is compared with the committed one. If the
+signatures agree, nothing further is computed. If they disagree, a route in the committed class is recovered
+--- by re-anchoring the route already being followed at the current pose, or, if that route is no longer
+usable, by re-planning behind a temporary barrier on the side the challenger chose --- and both are scored
+against the real obstacles with
+%
+\begin{equation}
+  J_{\text{route}} \;=\; \int \mathrm{d}s \;+\; w_{\text{clear}} \int \max\!\big(0,\, d_{\text{ref}} -
+  d_{\text{obs}}(s)\big)\,\mathrm{d}s ,
+  \label{eq:routescore}
+\end{equation}
+%
+the first term being \astar{}'s own path cost and the second the gap-width criterion, written so that
+squeezing past an obstacle is paid for in the same units as a detour. The challenger is adopted only if it
+beats the incumbent by more than $\delta$. Nothing in the nonlinear program changes: the layer is upstream of
+it, the reference handed to the controller has the same form it always had, and $J^\star$ on any single cycle
+is untouched.
+
+\restab{homotopydelta}
+
+Three readings of the sweep. A margin of exactly zero is not enough --- the challenger then wins on any
+improvement however small, and the flips survive; the hysteresis has to be strictly positive to exist at all,
+which is the content of the notes' ``continuous tuning parameter''. From $\delta=\resHomoDeltaSat$ upward the
+behaviour is constant, so the deployed value sits on a plateau rather than at a fitted optimum. And with a
+prediction horizon long enough for the controller to see the divergence
+($N=\resHomoNlong$), removing the flips is worth $\resHomoPathOff \to \resHomoPathLock$~m of executed path,
+$\resHomoClearOff \to \resHomoClearLock$~m of minimum clearance, and $\resHomoSuccOff \to
+\resHomoSuccLock$~\% of solved cycles.
+
+That last row is the substantive result, and it inverts the usual reading of Section~\ref{sec:horizon}. There
+the short horizon was shown to be dominated on time and clearance; here it is what conceals a defect in the
+layer above. A controller that cannot see far enough to be affected by an inconsistent reference is not
+thereby robust to it.
+
+\paragraph{What is not established.}
+The trade-off the notes describe --- degrees of freedom against complexity, here holding a class against
+refusing a better route --- was not observed. Raising $\delta$ to $\resHomoDeltaMax$, far beyond any route
+cost in these scenarios, degraded nothing, because in this set the committed class is never the worse one.
+Demonstrating the cost of hysteresis requires a scenario in which the world changes after the commitment is
+made, and that experiment has not been run. On the corridor a single flip survives the layer, so the
+mechanism is effective rather than complete. Finally, all of the above is measured in the offline harness,
+which tracks a look-ahead setpoint with a proportional controller; as in Section~\ref{sec:robust}, fine
+differences between references are attenuated by that outer loop, and confirmation on a recorded mission
+remains to be done.
