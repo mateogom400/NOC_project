@@ -17,7 +17,7 @@
       "final_distance_m": 0.343,
       "min_clearance_m": 0.01,
       "success_rate": 0.564,
-      "solve_ms_p95": 60.2,
+      "solve_ms_p95": 56.9,
       "path_length_m": 2.165
     },
     {
@@ -31,14 +31,16 @@
       "final_distance_m": 0.343,
       "min_clearance_m": 0.01,
       "success_rate": 0.564,
-      "solve_ms_p95": 57.1,
+      "solve_ms_p95": 61.3,
       "path_length_m": 2.165,
       "selector": {
         "calls": 8,
         "conflicts": 0,
         "held": 0,
         "switched": 0,
-        "no_alternative": 0
+        "no_alternative": 0,
+        "held_retained": 0,
+        "held_replanned": 0
       }
     },
     {
@@ -89,49 +91,19 @@
       "final_distance_m": 0.303,
       "min_clearance_m": 0.07,
       "success_rate": 0.912,
-      "solve_ms_p95": 53.7,
+      "solve_ms_p95": 52.9,
       "path_length_m": 3.297
     },
     {
       "scenario": "corridor",
       "delta": 0.5,
-      "flips": 5,
+      "flips": 1,
       "events": [
         {
           "from_cycle": 0,
           "to_cycle": 5,
           "clusters": [
             1
-          ]
-        },
-        {
-          "from_cycle": 5,
-          "to_cycle": 10,
-          "clusters": [
-            1
-          ]
-        },
-        {
-          "from_cycle": 10,
-          "to_cycle": 15,
-          "clusters": [
-            1,
-            2
-          ]
-        },
-        {
-          "from_cycle": 15,
-          "to_cycle": 20,
-          "clusters": [
-            1
-          ]
-        },
-        {
-          "from_cycle": 20,
-          "to_cycle": 25,
-          "clusters": [
-            0,
-            2
           ]
         }
       ],
@@ -141,14 +113,16 @@
       "final_distance_m": 0.303,
       "min_clearance_m": 0.07,
       "success_rate": 0.912,
-      "solve_ms_p95": 48.9,
+      "solve_ms_p95": 51.5,
       "path_length_m": 3.297,
       "selector": {
         "calls": 12,
-        "conflicts": 5,
-        "held": 3,
+        "conflicts": 4,
+        "held": 4,
         "switched": 0,
-        "no_alternative": 2
+        "no_alternative": 0,
+        "held_retained": 3,
+        "held_replanned": 1
       }
     },
     {
@@ -162,7 +136,7 @@
       "final_distance_m": 0.303,
       "min_clearance_m": 0.45,
       "success_rate": 1.0,
-      "solve_ms_p95": 36.6,
+      "solve_ms_p95": 37.6,
       "path_length_m": 2.697
     },
     {
@@ -176,14 +150,16 @@
       "final_distance_m": 0.303,
       "min_clearance_m": 0.45,
       "success_rate": 1.0,
-      "solve_ms_p95": 34.6,
+      "solve_ms_p95": 45.8,
       "path_length_m": 2.697,
       "selector": {
         "calls": 10,
         "conflicts": 0,
         "held": 0,
         "switched": 0,
-        "no_alternative": 0
+        "no_alternative": 0,
+        "held_retained": 0,
+        "held_replanned": 0
       }
     },
     {
@@ -219,7 +195,7 @@
       "final_distance_m": 0.302,
       "min_clearance_m": 0.0,
       "success_rate": 1.0,
-      "solve_ms_p95": 23.9,
+      "solve_ms_p95": 23.8,
       "path_length_m": 3.698
     },
     {
@@ -233,14 +209,16 @@
       "final_distance_m": 0.302,
       "min_clearance_m": 0.0,
       "success_rate": 1.0,
-      "solve_ms_p95": 19.8,
+      "solve_ms_p95": 23.0,
       "path_length_m": 3.698,
       "selector": {
         "calls": 13,
         "conflicts": 2,
         "held": 2,
         "switched": 0,
-        "no_alternative": 0
+        "no_alternative": 0,
+        "held_retained": 0,
+        "held_replanned": 2
       }
     }
   ]

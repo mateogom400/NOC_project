@@ -1,0 +1,223 @@
+{
+  "profile": "/tmp/noc_fork/src/a_star_mpc_planner/config/planner_params_g1.yaml",
+  "d_ref": 0.45,
+  "w_clear": 6.0,
+  "engage_m": 1.5,
+  "link_m": 0.3,
+  "replan_every": 5,
+  "runs": [
+    {
+      "scenario": "corridor",
+      "delta": null,
+      "flips": 5,
+      "events": [
+        {
+          "from_cycle": 0,
+          "to_cycle": 5,
+          "clusters": [
+            0
+          ]
+        },
+        {
+          "from_cycle": 5,
+          "to_cycle": 10,
+          "clusters": [
+            0
+          ]
+        },
+        {
+          "from_cycle": 10,
+          "to_cycle": 15,
+          "clusters": [
+            0
+          ]
+        },
+        {
+          "from_cycle": 15,
+          "to_cycle": 20,
+          "clusters": [
+            0,
+            2
+          ]
+        },
+        {
+          "from_cycle": 20,
+          "to_cycle": 25,
+          "clusters": [
+            1
+          ]
+        }
+      ],
+      "replans": 11,
+      "cycles": 57,
+      "goal_reached": true,
+      "final_distance_m": 0.303,
+      "min_clearance_m": 0.07,
+      "success_rate": 0.912,
+      "solve_ms_p95": 66.6,
+      "path_length_m": 3.297
+    },
+    {
+      "scenario": "corridor",
+      "delta": 0.0,
+      "flips": 2,
+      "events": [
+        {
+          "from_cycle": 0,
+          "to_cycle": 5,
+          "clusters": [
+            1
+          ]
+        },
+        {
+          "from_cycle": 5,
+          "to_cycle": 10,
+          "clusters": [
+            1
+          ]
+        }
+      ],
+      "replans": 11,
+      "cycles": 57,
+      "goal_reached": true,
+      "final_distance_m": 0.303,
+      "min_clearance_m": 0.07,
+      "success_rate": 0.912,
+      "solve_ms_p95": 47.5,
+      "path_length_m": 3.297,
+      "selector": {
+        "calls": 12,
+        "conflicts": 5,
+        "held": 4,
+        "switched": 1,
+        "no_alternative": 0,
+        "held_retained": 3,
+        "held_replanned": 1
+      }
+    },
+    {
+      "scenario": "corridor",
+      "delta": 0.25,
+      "flips": 1,
+      "events": [
+        {
+          "from_cycle": 0,
+          "to_cycle": 5,
+          "clusters": [
+            1
+          ]
+        }
+      ],
+      "replans": 11,
+      "cycles": 57,
+      "goal_reached": true,
+      "final_distance_m": 0.303,
+      "min_clearance_m": 0.07,
+      "success_rate": 0.912,
+      "solve_ms_p95": 46.4,
+      "path_length_m": 3.297,
+      "selector": {
+        "calls": 12,
+        "conflicts": 4,
+        "held": 4,
+        "switched": 0,
+        "no_alternative": 0,
+        "held_retained": 3,
+        "held_replanned": 1
+      }
+    },
+    {
+      "scenario": "corridor",
+      "delta": 0.5,
+      "flips": 1,
+      "events": [
+        {
+          "from_cycle": 0,
+          "to_cycle": 5,
+          "clusters": [
+            1
+          ]
+        }
+      ],
+      "replans": 11,
+      "cycles": 57,
+      "goal_reached": true,
+      "final_distance_m": 0.303,
+      "min_clearance_m": 0.07,
+      "success_rate": 0.912,
+      "solve_ms_p95": 48.8,
+      "path_length_m": 3.297,
+      "selector": {
+        "calls": 12,
+        "conflicts": 4,
+        "held": 4,
+        "switched": 0,
+        "no_alternative": 0,
+        "held_retained": 3,
+        "held_replanned": 1
+      }
+    },
+    {
+      "scenario": "corridor",
+      "delta": 1.0,
+      "flips": 1,
+      "events": [
+        {
+          "from_cycle": 0,
+          "to_cycle": 5,
+          "clusters": [
+            1
+          ]
+        }
+      ],
+      "replans": 11,
+      "cycles": 57,
+      "goal_reached": true,
+      "final_distance_m": 0.303,
+      "min_clearance_m": 0.07,
+      "success_rate": 0.912,
+      "solve_ms_p95": 49.3,
+      "path_length_m": 3.297,
+      "selector": {
+        "calls": 12,
+        "conflicts": 4,
+        "held": 4,
+        "switched": 0,
+        "no_alternative": 0,
+        "held_retained": 3,
+        "held_replanned": 1
+      }
+    },
+    {
+      "scenario": "corridor",
+      "delta": 2.0,
+      "flips": 1,
+      "events": [
+        {
+          "from_cycle": 0,
+          "to_cycle": 5,
+          "clusters": [
+            1
+          ]
+        }
+      ],
+      "replans": 11,
+      "cycles": 57,
+      "goal_reached": true,
+      "final_distance_m": 0.303,
+      "min_clearance_m": 0.07,
+      "success_rate": 0.912,
+      "solve_ms_p95": 50.9,
+      "path_length_m": 3.297,
+      "selector": {
+        "calls": 12,
+        "conflicts": 4,
+        "held": 4,
+        "switched": 0,
+        "no_alternative": 0,
+        "held_retained": 3,
+        "held_replanned": 1
+      }
+    }
+  ]
+}

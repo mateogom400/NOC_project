@@ -25,9 +25,14 @@ How it works, at each re-plan:
   1. A* runs normally and produces a candidate route.
   2. Its homotopy signature is compared with the one currently committed.
   3. If they agree, the candidate is accepted and nothing else is computed.
-  4. If they disagree, a second route is generated in the COMMITTED class, by
-     temporarily barring the side the new candidate chose, and both routes are
-     scored against the REAL obstacles:
+  4. If they disagree, an incumbent route in the COMMITTED class is obtained,
+     from two sources in order of preference: the route already being followed,
+     re-anchored at the current pose and checked to be still collision-free; or,
+     failing that, a fresh A* run behind a temporary barrier on the side the
+     challenger chose.  Retaining the route is what hysteresis plainly means and
+     is almost always available; the barrier is the fallback, and can legitimately
+     fail when the committed side is no longer reachable from here.  Challenger
+     and incumbent are then scored against the REAL obstacles:
 
          J(route) = length + w_clear * integral of max(0, d_ref - clearance)
 
@@ -102,6 +107,34 @@ def route_score(path: np.ndarray, obstacles: np.ndarray,
     return length + w_clear * float((mid * seg).sum())
 
 
+def reanchor(path: np.ndarray, pose, min_clearance: float,
+             obstacles: np.ndarray) -> np.ndarray | None:
+    """
+    The previously committed route, re-anchored at the current pose.
+
+    Hysteresis in its plainest form is "keep doing what you were doing", so the
+    incumbent candidate should be the route already being followed, truncated to
+    the part still ahead of the robot.  Returns None when that route is no longer
+    usable -- it has been consumed, or the world has moved into it -- in which
+    case there is nothing to hold and the challenger must be accepted.
+    """
+    if path is None or len(path) < 2:
+        return None
+    p = np.atleast_2d(np.asarray(path, dtype=float))[:, :2]
+    here = np.asarray(pose[:2], dtype=float)
+    j = int(np.argmin(np.linalg.norm(p - here, axis=1)))
+    tail = p[j:]
+    if len(tail) < 2:
+        return None                      # the route has been used up
+    out = np.vstack([here, tail])
+    if obstacles is not None and len(obstacles):
+        d = np.linalg.norm(out[:, None, :] - np.atleast_2d(obstacles)[None, :, :],
+                           axis=2).min()
+        if d < min_clearance:
+            return None                  # no longer collision-free: do not hold it
+    return out
+
+
 def barrier_points(pts: np.ndarray, side: int, origin: np.ndarray,
                    axis: np.ndarray, span: float = BARRIER_M,
                    spacing: float = 0.12) -> np.ndarray:
@@ -142,8 +175,11 @@ class RouteSelector:
         self.origin = None                     # mission frame, fixed at first call
         self.axis = None
         self.committed: dict = {}              # cluster -> side
+        self.committed_path = None             # the route currently being followed
+        self.min_hold_clearance = 0.05         # below this a retained route is dead
         self.stats = {"calls": 0, "conflicts": 0, "held": 0,
-                      "switched": 0, "no_alternative": 0}
+                      "switched": 0, "no_alternative": 0,
+                      "held_retained": 0, "held_replanned": 0}
 
     # -- frame ---------------------------------------------------------------
     def _set_frame(self, pose):
@@ -168,35 +204,58 @@ class RouteSelector:
         conflicts = [i for i, (s, _) in sig.items()
                      if i in self.committed and s != self.committed[i]]
         if not conflicts:
-            self._commit(sig)
+            self._commit(sig, base)
             return base
         self.stats["conflicts"] += 1
 
-        # the alternative: bar the side the challenger chose, re-plan
+        # Two ways to obtain a route in the committed class, in order of
+        # preference.  Retaining the route already being followed is what
+        # hysteresis means and is almost always available; re-planning behind a
+        # temporary barrier is the fallback, and can legitimately fail when the
+        # committed side is no longer reachable from here.
+        candidates = []
+        kept = reanchor(self.committed_path, pose, self.min_hold_clearance, obs)
+        if kept is not None:
+            kept_sig = hf.signature(kept, clusters, self.origin, self.axis,
+                                    self.engage)
+            if all(kept_sig.get(i, (sig[i][0], 0))[0] == self.committed[i]
+                   for i in conflicts):
+                candidates.append(("retained", kept, kept_sig))
+
         extra = [barrier_points(clusters[i], sig[i][0], self.origin, self.axis,
                                 self.span) for i in conflicts]
         alt = self._plain(pose, goal, np.vstack([obs] + extra), raw)
-        if alt is None or len(alt) < 2:
+        if alt is not None and len(alt) >= 2:
+            candidates.append(("replanned", alt, hf.signature(
+                alt, clusters, self.origin, self.axis, self.engage)))
+
+        if not candidates:
             self.stats["no_alternative"] += 1
-            self._commit(sig)               # the class cannot be held: accept
+            self._commit(sig, base)         # the class cannot be held: accept
             return base
 
-        # score BOTH against the real obstacles; the barrier is not a cost
+        # score everything against the REAL obstacles; the barrier is not a cost
         j_new = route_score(base, obs, self.d_ref, self.w_clear)
-        j_old = route_score(alt, obs, self.d_ref, self.w_clear)
+        kind, inc, inc_sig = min(
+            candidates, key=lambda c: route_score(c[1], obs, self.d_ref,
+                                                  self.w_clear))
+        j_old = route_score(inc, obs, self.d_ref, self.w_clear)
 
         if j_new < j_old - self.delta:
             self.stats["switched"] += 1
-            self._commit(sig)
+            self._commit(sig, base)
             return base
 
         self.stats["held"] += 1
-        self._commit(hf.signature(alt, clusters, self.origin, self.axis, self.engage))
-        return alt
+        self.stats["held_" + kind] += 1
+        self._commit(inc_sig, inc)
+        return inc
 
-    def _commit(self, sig):
+    def _commit(self, sig, path=None):
         for i, (s, _) in sig.items():
             self.committed[i] = s
+        if path is not None:
+            self.committed_path = np.asarray(path, dtype=float)
 
 
 @contextlib.contextmanager

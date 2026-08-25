@@ -1,0 +1,225 @@
+{
+  "profile": "/tmp/noc_fork/src/a_star_mpc_planner/config/planner_params_g1.yaml",
+  "d_ref": 0.45,
+  "w_clear": 6.0,
+  "engage_m": 1.5,
+  "link_m": 0.3,
+  "replan_every": 5,
+  "runs": [
+    {
+      "scenario": "u_trap",
+      "delta": null,
+      "flips": 1,
+      "events": [
+        {
+          "from_cycle": 0,
+          "to_cycle": 5,
+          "clusters": [
+            0
+          ]
+        }
+      ],
+      "replans": 23,
+      "cycles": 133,
+      "goal_reached": true,
+      "final_distance_m": 0.302,
+      "min_clearance_m": 0.009,
+      "success_rate": 0.992,
+      "solve_ms_p95": 60.7,
+      "path_length_m": 6.653
+    },
+    {
+      "scenario": "u_trap",
+      "delta": 0.0,
+      "flips": 1,
+      "events": [
+        {
+          "from_cycle": 0,
+          "to_cycle": 5,
+          "clusters": [
+            0
+          ]
+        }
+      ],
+      "replans": 23,
+      "cycles": 133,
+      "goal_reached": true,
+      "final_distance_m": 0.302,
+      "min_clearance_m": 0.009,
+      "success_rate": 0.992,
+      "solve_ms_p95": 61.5,
+      "path_length_m": 6.653,
+      "selector": {
+        "calls": 27,
+        "conflicts": 1,
+        "held": 0,
+        "switched": 1,
+        "no_alternative": 0,
+        "held_retained": 0,
+        "held_replanned": 0
+      }
+    },
+    {
+      "scenario": "u_trap",
+      "delta": 0.25,
+      "flips": 0,
+      "events": [],
+      "replans": 17,
+      "cycles": 92,
+      "goal_reached": true,
+      "final_distance_m": 0.324,
+      "min_clearance_m": 0.113,
+      "success_rate": 1.0,
+      "solve_ms_p95": 61.5,
+      "path_length_m": 5.324,
+      "selector": {
+        "calls": 19,
+        "conflicts": 1,
+        "held": 1,
+        "switched": 0,
+        "no_alternative": 0,
+        "held_retained": 0,
+        "held_replanned": 1
+      }
+    },
+    {
+      "scenario": "u_trap",
+      "delta": 0.5,
+      "flips": 0,
+      "events": [],
+      "replans": 17,
+      "cycles": 92,
+      "goal_reached": true,
+      "final_distance_m": 0.324,
+      "min_clearance_m": 0.113,
+      "success_rate": 1.0,
+      "solve_ms_p95": 60.3,
+      "path_length_m": 5.324,
+      "selector": {
+        "calls": 19,
+        "conflicts": 1,
+        "held": 1,
+        "switched": 0,
+        "no_alternative": 0,
+        "held_retained": 0,
+        "held_replanned": 1
+      }
+    },
+    {
+      "scenario": "u_trap",
+      "delta": 1.0,
+      "flips": 0,
+      "events": [],
+      "replans": 17,
+      "cycles": 92,
+      "goal_reached": true,
+      "final_distance_m": 0.324,
+      "min_clearance_m": 0.113,
+      "success_rate": 1.0,
+      "solve_ms_p95": 69.2,
+      "path_length_m": 5.324,
+      "selector": {
+        "calls": 19,
+        "conflicts": 1,
+        "held": 1,
+        "switched": 0,
+        "no_alternative": 0,
+        "held_retained": 0,
+        "held_replanned": 1
+      }
+    },
+    {
+      "scenario": "u_trap",
+      "delta": 2.0,
+      "flips": 0,
+      "events": [],
+      "replans": 17,
+      "cycles": 92,
+      "goal_reached": true,
+      "final_distance_m": 0.324,
+      "min_clearance_m": 0.113,
+      "success_rate": 1.0,
+      "solve_ms_p95": 68.2,
+      "path_length_m": 5.324,
+      "selector": {
+        "calls": 19,
+        "conflicts": 1,
+        "held": 1,
+        "switched": 0,
+        "no_alternative": 0,
+        "held_retained": 0,
+        "held_replanned": 1
+      }
+    },
+    {
+      "scenario": "u_trap",
+      "delta": 5.0,
+      "flips": 0,
+      "events": [],
+      "replans": 17,
+      "cycles": 92,
+      "goal_reached": true,
+      "final_distance_m": 0.324,
+      "min_clearance_m": 0.113,
+      "success_rate": 1.0,
+      "solve_ms_p95": 65.8,
+      "path_length_m": 5.324,
+      "selector": {
+        "calls": 19,
+        "conflicts": 1,
+        "held": 1,
+        "switched": 0,
+        "no_alternative": 0,
+        "held_retained": 0,
+        "held_replanned": 1
+      }
+    },
+    {
+      "scenario": "u_trap",
+      "delta": 10.0,
+      "flips": 0,
+      "events": [],
+      "replans": 17,
+      "cycles": 92,
+      "goal_reached": true,
+      "final_distance_m": 0.324,
+      "min_clearance_m": 0.113,
+      "success_rate": 1.0,
+      "solve_ms_p95": 58.9,
+      "path_length_m": 5.324,
+      "selector": {
+        "calls": 19,
+        "conflicts": 1,
+        "held": 1,
+        "switched": 0,
+        "no_alternative": 0,
+        "held_retained": 0,
+        "held_replanned": 1
+      }
+    },
+    {
+      "scenario": "u_trap",
+      "delta": 20.0,
+      "flips": 0,
+      "events": [],
+      "replans": 17,
+      "cycles": 92,
+      "goal_reached": true,
+      "final_distance_m": 0.324,
+      "min_clearance_m": 0.113,
+      "success_rate": 1.0,
+      "solve_ms_p95": 65.7,
+      "path_length_m": 5.324,
+      "selector": {
+        "calls": 19,
+        "conflicts": 1,
+        "held": 1,
+        "switched": 0,
+        "no_alternative": 0,
+        "held_retained": 0,
+        "held_replanned": 1
+      }
+    }
+  ],
+  "note": "u_trap with mpc_N=40 (8 s horizon); delta swept 0..20"
+}
