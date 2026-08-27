@@ -1,0 +1,42 @@
+# Overlay per i mondi con ostacoli NON CONVESSI (long_wall, horseshoe,
+# dead_end di g1_sim/mujoco_world.py). Si usa cosi':
+#
+#   ros2 launch g1_sim g1_a_star_mpc.launch.py world:=horseshoe \
+#        planner_overlay:=$(ros2 pkg prefix a_star_mpc_planner)/share/a_star_mpc_planner/config/overlay_nonconvex.yaml
+#
+# PERCHE' SERVE. A* pianifica su una finestra mobile larga 2*grid_half_width
+# centrata sul robot. Se il goal cade fuori da quella finestra viene proiettato
+# sul bordo, e con un ostacolo concavo la proiezione punta dritta dentro la
+# trappola: il pianificatore non puo' aggirare cio' che non vede. Misurato su
+# viz/common.world_scenario, un solo piano dallo spawn:
+#
+# Misurato in ANELLO CHIUSO (viz/common.closed_loop, un run per cella):
+#
+#   grid_half_width   long_wall          horseshoe    dead_end
+#   6.0 (default)     bloccato           bloccato     bloccato
+#   8.0               ATTRAVERSA il muro goal ok      bloccato
+#   10.0              goal ok            goal ok      goal ok
+#   14.0              goal ok            goal ok      goal ok
+#
+# 10.0 e' il minimo che risolve tutti e tre, ed e' il valore scelto qui. La
+# cella "ATTRAVERSA il muro" e' un FALSO successo: l'impianto dell'harness non
+# ha collisioni, il ripiego proporzionale ha puntato l'ultimo waypoint di A*
+# oltre il muro e ci e' passato dentro (clearance 0.033 m). Vedi
+# viz/common.check_collisions — un goal raggiunto va sempre letto insieme alla
+# clearance.
+#
+# La soglia non e' universale: dipende da quanto e' grande l'ostacolo concavo
+# rispetto alla finestra. La regola pratica e' che la finestra deve contenere
+# l'ostacolo INTERO piu' la via d'uscita, non solo la faccia che il robot vede.
+#
+# COSTO. Il piano passa da ~50 ms a ~140 ms (griglia 100x100 invece di 60x60);
+# a 14.0 sarebbero ~300 ms. Con replan_rate_hz = 1.0 c'e' margine, ma non e'
+# gratis, ed e' la ragione per cui questo non e' il default.
+#
+# ALTERNATIVA DA PROVARE PRIMA: nav_graph:=true. La memoria topologica globale
+# esiste proprio per ricordare la struttura oltre la finestra, e questi tre
+# mondi sono il test che non ha mai avuto. Se basta quella, la finestra puo'
+# restare a 6.0 e si risparmiano i 250 ms.
+/**:
+  ros__parameters:
+    grid_half_width: 10.0

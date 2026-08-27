@@ -28,3 +28,6 @@ assets/*.mp4
 # Restano fuori solo le GIF, troppo pesanti (~7 MB l'una) e rigenerabili.
 viz/out/**/*.gif
 viz/bags/
+
+# Report build tree (gli asset vivono nel repo del report)
+/report_draft/build_integrated/

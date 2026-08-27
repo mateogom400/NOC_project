@@ -61,13 +61,39 @@
     # ─────────────────────────────────────────────────────────────
     # Orizzonte
     # ─────────────────────────────────────────────────────────────
-    # [HW] N*dt = 3.0 s. dt, non N, e' la leva: il costo del solve scala con il
-    # numero di nodi, allungare dt e' gratis. Il vincolo e' che una CURVA A 90
-    # GRADI stia dentro l'orizzonte: pi/2 / omega_max = 5.2 s a omega_max 0.3,
-    # e 3.0 s valgono 1.75 tempi-di-curva. Un passo copre 6 cm e 3.4 gradi, ben
-    # sotto obs_r (0.40 m): la barriera non puo' essere scavalcata tra due nodi.
+    # dt, non N, e' la leva: il costo del solve scala con il numero di nodi,
+    # allungare dt e' quasi gratis. Il vincolo dichiarato e' che una CURVA A 90
+    # GRADI stia dentro l'orizzonte: pi/2 / omega_max = 5.24 s a omega_max 0.3.
+    #
+    # [FIX] Il commento precedente affermava che N*dt = 3.0 s valessero "1.75
+    # tempi-di-curva". Il rapporto e' invertito: 3.0 / 5.24 = 0.57, cioe'
+    # l'orizzonte conteneva il 57% di una curva a 90 gradi, ed era 1.75 volte
+    # PIU' CORTO del proprio criterio. Il numero 1.75 e' 5.24 / 3.0.
+    #
+    # [SIM] N*dt = 5.25 s soddisfa il criterio con il margine minimo, alzando
+    # dt e lasciando N: stesse 141 variabili, +1.7 ms sul p95. Misurato da
+    # viz/horizon_sweep_ext.py su narrow_gap/u_trap/corridor, media di 3
+    # scenari, clearance minima:
+    #     T = 3.0 s (era)   0.783 m   p95 19.7 ms
+    #     T = 5.25 s (ora)  0.853 m   p95 21.4 ms   <- massimo della tabella
+    #     T = 9.1 s         0.850 m   p95 29.8 ms
+    #     T = 14.0 s        0.850 m   p95 37.8 ms
+    # La clearance SATURA appena superato il criterio della curva: oltre 5.2 s
+    # si paga solo tempo di calcolo. Un passo copre ora 10.5 cm e 6.0 gradi,
+    # sempre ben sotto obs_r (0.40 m): la barriera non e' scavalcabile fra due
+    # nodi. Errore di troncamento del punto medio: O(dt^2), da 8.7e-5 a 2.7e-4 m
+    # sull'orizzonte, irrilevante (tests/test_integrators.py).
+    #
+    # ATTENZIONE alla fedelta': dt e' il passo di PREDIZIONE, non il periodo di
+    # controllo (mpc_rate_hz = 8 -> 0.125 s). Il rapporto passa da 1.6x a 2.8x.
+    # Qui pesa poco perche' mpc_node non applica u[0]: pubblica un setpoint
+    # geometrico preso sulla traiettoria predetta a mpc_lookahead_dist. Ma
+    # viz/common.closed_loop usa dt ANCHE come passo dell'impianto, quindi lo
+    # sweep non puo' vedere questa penalita'. Alternativa conservativa a parita'
+    # di risultato misurato: N = 26, dt = 0.20 (T = 5.2 s, clearance 0.846,
+    # p95 28.7 ms, 240 variabili).
     mpc_N: 15                      # [HW]
-    mpc_dt: 0.20                   # [HW]
+    mpc_dt: 0.35                   # [SIM] era 0.20
     mpc_rate_hz: 8.0               # [HW]
 
     # ─────────────────────────────────────────────────────────────
@@ -106,13 +132,27 @@
     # il raggio di sterzata minimo v/omega scende da 1.25 a 1.0 m, quindi il
     # robot derated e' geometricamente MIGLIORE nell'evadere, non peggiore.
     mpc_vx_max: 0.3                # [HW] avanti [m/s] — tetto AMO 0.5
-    mpc_vy_max: 0.02               # [HW] praticamente nessuno strafe; non 0 esatto
-                                   #      per il condizionamento del solutore
     mpc_omega_max: 0.3             # [HW] [rad/s] — tetto AMO 0.4
-    # Nessuna retromarcia: il vincolo U[0,k] >= 0 e' gia' imposto nell'NLP
-    # (mpc_tracker._build_nlp). Sul G1 non e' una comodita' ma una necessita':
-    # il Mid-360 copre solo -7..+52 gradi in elevazione e ha un cono cieco
-    # posteriore, quindi indietreggiare significa muoversi alla cieca.
+
+    # [SIM] Il G1 e' un umanoide olonomo: cammina traslando lateralmente e
+    # ruotando mentre avanza, tutto insieme. Il profilo azzerava vy per due
+    # ragioni entrambe legate all'HARDWARE, non alla cinematica del robot:
+    # l'argano di sicurezza dietro al busto e il cono cieco posteriore del
+    # Mid-360 reale. In simulazione non esiste ne' l'uno ne' l'altro (il LiDAR
+    # MuJoCo campiona l'azimut pieno -pi..pi, vedi mujoco_sim._local_dirs),
+    # quindi si restituisce al modello tutti e 3 i gradi di liberta'.
+    #
+    # vy_max sta sotto vx_max perche' lo strafe di un umanoide E' realmente piu'
+    # lento dell'andatura frontale: non e' un derating di sicurezza, e' la
+    # cinematica del passo laterale.
+    mpc_vy_max: 0.15               # [SIM] strafe [m/s] — era 0.02
+
+    # Retromarcia ammessa ma asimmetrica: indietreggiare a passo pieno non e'
+    # un'andatura naturale per il G1, e tenerla piu' lenta della marcia avanti
+    # mantiene la manovra di sgancio come ripiego, non come scorciatoia che
+    # l'ottimizzatore sceglie a ogni sosta. 0.0 ripristina il vincolo
+    # U[0,k] >= 0 del profilo hardware.
+    mpc_vx_min: -0.15              # [SIM] indietro [m/s] — era 0 (vincolo rigido)
 
     # [HW] La velocita' di crociera sta ~1/3 sotto vx_max DI PROPOSITO: il
     # riferimento viene ri-ancorato al punto del path piu' vicino al robot a ogni
@@ -139,7 +179,13 @@
     # Sforzo di controllo
     # ─────────────────────────────────────────────────────────────
     mpc_R_vx: 1.0                  # [HW] R_vel
-    mpc_R_vy: 1.0                  # [HW] R_vel
+    # [SIM] R_vy > R_vx DISINCENTIVA lo strafe senza vietarlo: con vy libero e
+    # R_vy == R_vx l'ottimizzatore scopre che traslare di lato costa meno che
+    # ruotare (Q_yaw = 4 va pagato, il crab walk no) e il robot granchia verso
+    # il goal senza mai orientarsi. Il fattore 6 lascia vy come manovra di
+    # aggiustamento fine e di evasione laterale, tenendo "ruota e avanza" come
+    # modo di locomozione dominante.
+    mpc_R_vy: 6.0                  # [SIM] era 1.0
     mpc_R_omega: 0.4               # [HW]
     mpc_R_jerk: 0.4                # [HW]
 
@@ -222,7 +268,11 @@
     cmd_kp_xy: 1.0                 # [HW] inner_loop kp_pos del profilo G1
     cmd_kp_yaw: 1.5                # [HW] inner_loop kp_yaw
     cmd_max_vx: 0.3                # [HW] = mpc_vx_max
-    cmd_max_vy: 0.02               # [HW] = mpc_vy_max
+    cmd_min_vx: -0.15              # [SIM] = mpc_vx_min; il clamp era simmetrico
+                                   #        (-cmd_max_vx), quindi l'anello esterno
+                                   #        avrebbe potuto chiedere -0.3 mentre il
+                                   #        modello ne predice solo -0.15.
+    cmd_max_vy: 0.15               # [SIM] = mpc_vy_max
     cmd_max_omega: 0.3             # [HW] = mpc_omega_max
     cmd_stop_radius: 0.2
     enable_yaw_control: true

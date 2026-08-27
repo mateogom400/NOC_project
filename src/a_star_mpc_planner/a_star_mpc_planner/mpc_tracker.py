@@ -68,6 +68,14 @@ class MPCConfig:
     vy_max:    float = 0.5
     omega_max: float = 1.5
 
+    # Limite INFERIORE su vx_cmd. 0.0 => nessuna retromarcia (il vincolo
+    # U[0,k] >= 0 che serviva sull'hardware, dove il cono cieco posteriore del
+    # Mid-360 rende il moto all'indietro cieco). Negativo => retromarcia
+    # ammessa fino a |vx_min|. In simulazione il LiDAR e' a 360 gradi e non c'e'
+    # argano dietro al robot, quindi il vincolo puo' essere rilassato.
+    # NB: e' un valore <= 0; viene comunque saturato a -vx_max a run time.
+    vx_min:    float = 0.0
+
     # Desired cruise speed
     v_ref: float = 0.5
 
@@ -648,7 +656,12 @@ class MPCTracker:
         # (Def. 6.1.5) e renderebbero i moltiplicatori non unici — cioe'
         # romperebbero proprio l'analisi della §2.1.
         for k in range(n_c):
-            opti.subject_to(U_free[0, k] >= 0.0)
+            # vx_min <= 0: 0.0 vieta la retromarcia, un valore negativo la
+            # concede. Si passa da fmax(-p_vx_max, .) perche' p_vx_max e'
+            # adattivo a run time (_adaptive_vx_max): se scendesse sotto
+            # |vx_min| il box diventerebbe vuoto e l'NLP infeasible.
+            vx_lo = ca.fmax(-p_vx_max, float(min(cfg.vx_min, 0.0)))
+            opti.subject_to(U_free[0, k] >= vx_lo)
             opti.subject_to(U_free[0, k] <= p_vx_max)
             opti.subject_to(opti.bounded(-p_vy_max,    U_free[1, k],  p_vy_max))
             opti.subject_to(opti.bounded(-p_omega_max, U_free[2, k],  p_omega_max))

@@ -75,6 +75,7 @@ class MPCNode(Node):
         self.declare_parameter('mpc_tau_v',        0.12)   # actuator lag — fix #3/#4
         self.declare_parameter('mpc_tau_w',        0.10)
         self.declare_parameter('mpc_vx_max',       1.0)
+        self.declare_parameter('mpc_vx_min',       0.0)   # <=0; 0 = niente retromarcia
         self.declare_parameter('mpc_vy_max',       0.5)
         self.declare_parameter('mpc_omega_max',    1.5)
         self.declare_parameter('mpc_v_ref',        0.5)
@@ -144,6 +145,7 @@ class MPCNode(Node):
             tau_v         = float(self.get_parameter('mpc_tau_v').value),
             tau_w         = float(self.get_parameter('mpc_tau_w').value),
             vx_max        = float(self.get_parameter('mpc_vx_max').value),
+            vx_min        = float(self.get_parameter('mpc_vx_min').value),
             vy_max        = float(self.get_parameter('mpc_vy_max').value),
             omega_max     = float(self.get_parameter('mpc_omega_max').value),
             v_ref         = float(self.get_parameter('mpc_v_ref').value),
@@ -696,7 +698,8 @@ class MPCNode(Node):
                 # "mantieni l'orientamento che hai" significa omega = 0. Se il
                 # fallback e' frequente il robot non ruota MAI: avanza dritto
                 # finche' il goal non gli finisce di fianco, e li' si pianta,
-                # perche' lo spostamento laterale gli e' precluso (vy_max ~ 0).
+                # perche' lo spostamento laterale e' fortemente penalizzato
+                # (R_vy >> R_vx) e non basta a chiudere l'errore da solo.
                 # Il riferimento corretto e' la direzione VERSO il waypoint.
                 last_wp = self._a_star_path[-1]
                 nxt_xy  = np.array([float(last_wp[0]), float(last_wp[1])])

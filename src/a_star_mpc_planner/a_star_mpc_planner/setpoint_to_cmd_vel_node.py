@@ -55,6 +55,11 @@ class SetpointToCmdVelNode(Node):
         self.declare_parameter('cmd_kp_xy', 1.0)
         self.declare_parameter('cmd_kp_yaw', 1.5)
         self.declare_parameter('cmd_max_vx', 0.8)
+        # Limite INFERIORE su vx. NaN = simmetrico (-cmd_max_vx), che era il
+        # comportamento storico. Va tenuto allineato a mpc_vx_min: il YAML
+        # richiede che i clamp non eccedano i limiti del modello dell'MPC,
+        # altrimenti l'anello esterno chiede piu' di quanto il piano preveda.
+        self.declare_parameter('cmd_min_vx', float('nan'))
         self.declare_parameter('cmd_max_vy', 0.4)
         self.declare_parameter('cmd_max_omega', 1.2)
         self.declare_parameter('cmd_stop_radius', 0.2)
@@ -69,6 +74,8 @@ class SetpointToCmdVelNode(Node):
         self._kp_xy = float(self.get_parameter('cmd_kp_xy').value)
         self._kp_yaw = float(self.get_parameter('cmd_kp_yaw').value)
         self._max_vx = float(self.get_parameter('cmd_max_vx').value)
+        _min_vx = float(self.get_parameter('cmd_min_vx').value)
+        self._min_vx = -self._max_vx if _min_vx != _min_vx else _min_vx
         self._max_vy = float(self.get_parameter('cmd_max_vy').value)
         self._max_omega = float(self.get_parameter('cmd_max_omega').value)
         self._stop_radius = float(self.get_parameter('cmd_stop_radius').value)
@@ -176,7 +183,7 @@ class SetpointToCmdVelNode(Node):
             raw_cmd.linear.x = 0.0
             raw_cmd.linear.y = 0.0
         else:
-            raw_cmd.linear.x = _clamp(self._kp_xy * ex, -self._max_vx, self._max_vx)
+            raw_cmd.linear.x = _clamp(self._kp_xy * ex, self._min_vx, self._max_vx)
             raw_cmd.linear.y = _clamp(self._kp_xy * ey, -self._max_vy, self._max_vy)
 
         if self._enable_yaw_control and dist > self._stop_radius:

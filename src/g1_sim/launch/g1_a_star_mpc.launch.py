@@ -60,12 +60,18 @@ def generate_launch_description():
     planner_share = get_package_share_directory("a_star_mpc_planner")
 
     default_planner = os.path.join(planner_share, "config", "planner_params_g1.yaml")
+    default_overlay = os.path.join(planner_share, "config", "overlay_none.yaml")
     default_lidar   = os.path.join(g1_share, "config", "lidar_filter_g1.yaml")
     default_sim     = os.path.join(g1_share, "config", "g1_sim.yaml")
     default_rviz    = os.path.join(g1_share, "rviz", "g1_nav.rviz")
 
     args = [
         DeclareLaunchArgument("params_file",  default_value=default_planner),
+        # Secondo file di parametri, fuso SOPRA params_file (ROS 2 applica i
+        # file nell'ordine della lista e l'ultimo vince). Serve a variare
+        # pochi parametri senza duplicare un profilo da 250 righe: vedi
+        # config/overlay_nonconvex.yaml per i mondi concavi.
+        DeclareLaunchArgument("planner_overlay", default_value=default_overlay),
         DeclareLaunchArgument("lidar_params", default_value=default_lidar),
         DeclareLaunchArgument("sim_params",   default_value=default_sim),
         DeclareLaunchArgument("rviz_config",  default_value=default_rviz),
@@ -74,6 +80,11 @@ def generate_launch_description():
                               description="pubblica /robot_description per vedere il G1 in RViz"),
         DeclareLaunchArgument("viewer",       default_value="true"),
         DeclareLaunchArgument("people",       default_value=""),
+        # Geometria del mondo MuJoCo. "industrial" e' il magazzino;
+        # long_wall / horseshoe / dead_end sono i mondi con ostacoli non
+        # convessi (vedi g1_sim/mujoco_world.py, WORLDS). Cambiando mondo
+        # cambia anche la posa di spawn, presa dal mondo stesso.
+        DeclareLaunchArgument("world",        default_value="industrial"),
         DeclareLaunchArgument("nav_graph",    default_value="false"),
         DeclareLaunchArgument("goal_relay",   default_value="true"),
         DeclareLaunchArgument("use_mission",  default_value="false"),
@@ -87,7 +98,7 @@ def generate_launch_description():
     # Il simulatore E' la sorgente di /clock, quindi e' l'unico nodo che NON usa
     # use_sim_time; tutto il resto della catena lo usa.
     sim_time = {"use_sim_time": True}
-    planner  = [params_file, sim_time]
+    planner  = [params_file, LaunchConfiguration("planner_overlay"), sim_time]
 
     nodes = [
         # L'URDF ha come radice 'pelvis', mentre mujoco_sim pubblica la posa
@@ -126,6 +137,7 @@ def generate_launch_description():
                 sim_params,
                 {"viewer": ParameterValue(LaunchConfiguration("viewer"), value_type=bool),
                  "people": LaunchConfiguration("people"),
+                 "world": LaunchConfiguration("world"),
                  "use_sim_time": False},
             ],
         ),

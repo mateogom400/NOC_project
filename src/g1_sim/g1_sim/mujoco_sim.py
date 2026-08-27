@@ -149,6 +149,16 @@ class MujocoSim(Node):
     def __init__(self):
         super().__init__('mujoco_sim')
         self.declare_parameter('g1_xml', '')   # default resolved below
+        # Mondo: 'industrial' (magazzino, default) oppure uno dei mondi con
+        # ostacoli non convessi — long_wall, horseshoe, dead_end. Vedi
+        # mujoco_world.WORLDS.
+        self.declare_parameter('world', 'industrial')
+        # Con true la posa di spawn la decide il MONDO (ogni mondo ha un punto
+        # di partenza da cui la trappola ha senso); con false valgono spawn_x/
+        # spawn_y/spawn_yaw qui sotto. I valori di spawn_* restano quelli del
+        # magazzino, quindi cambiando mondo senza questo flag il robot nascerebbe
+        # dentro un muro.
+        self.declare_parameter('use_world_spawn', True)
         self.declare_parameter('spawn_x', -12.0)
         self.declare_parameter('spawn_y', 0.0)
         self.declare_parameter('spawn_yaw', 0.0)
@@ -224,13 +234,23 @@ class MujocoSim(Node):
         g1 = self.get_parameter('g1_xml').value or default_g1_mjcf()
 
         self._people = self._parse_people(self.get_parameter('people').value)
-        self.model, self.info = build_model(g1, n_people=len(self._people))
+        world = str(self.get_parameter('world').value)
+        self.model, self.info = build_model(g1, n_people=len(self._people),
+                                            world=world)
         self.data = mujoco.MjData(self.model)
 
         self.base_z = float(self.get_parameter('base_height').value)
-        self.x = float(self.get_parameter('spawn_x').value)
-        self.y = float(self.get_parameter('spawn_y').value)
-        self.yaw = float(self.get_parameter('spawn_yaw').value)
+        if bool(self.get_parameter('use_world_spawn').value):
+            self.x, self.y, self.yaw = (float(v) for v in self.info['world_spawn'])
+        else:
+            self.x = float(self.get_parameter('spawn_x').value)
+            self.y = float(self.get_parameter('spawn_y').value)
+            self.yaw = float(self.get_parameter('spawn_yaw').value)
+        gx, gy = self.info['world_goal']
+        self.get_logger().info(
+            f"mondo '{self.info['world']}': {self.info['world_desc']} | "
+            f"spawn ({self.x:.1f}, {self.y:.1f}, yaw {self.yaw:.2f}) | "
+            f"goal suggerito ({gx:.1f}, {gy:.1f}) da assegnare con 2D Goal Pose")
         self.vx = self.vy = self.wz = 0.0
         self._last_cmd_t = 0.0
         self.cmd_timeout = float(self.get_parameter('cmd_timeout').value)

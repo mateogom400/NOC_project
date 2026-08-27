@@ -23,6 +23,8 @@ from a_star_mpc_planner.mpc_tracker import MPCConfig, MPCTracker  # noqa: E402
 from a_star_mpc_planner.a_star_planner import AStarPlanner  # noqa: E402
 from a_star_mpc_planner.gaussian_grid_map import FixedGaussianGridMap  # noqa: E402
 
+_HERE_COMMON = os.path.dirname(os.path.abspath(__file__))
+
 DEFAULT_PROFILE = os.path.join(
     _REPO, "src", "a_star_mpc_planner", "config", "planner_params_g1.yaml")
 
@@ -49,6 +51,7 @@ def load_profile(path: str = DEFAULT_PROFILE,
         N=int(raw["mpc_N"]), dt=float(raw["mpc_dt"]),
         tau_v=float(raw["mpc_tau_v"]), tau_w=float(raw["mpc_tau_w"]),
         vx_max=float(raw["mpc_vx_max"]), vy_max=float(raw["mpc_vy_max"]),
+        vx_min=float(raw.get("mpc_vx_min", 0.0)),
         omega_max=float(raw["mpc_omega_max"]), v_ref=float(raw["mpc_v_ref"]),
         Q_x=float(raw["mpc_Q_x"]), Q_y=float(raw["mpc_Q_y"]),
         Q_yaw=float(raw["mpc_Q_yaw"]), Q_terminal=float(raw["mpc_Q_terminal"]),
@@ -60,6 +63,7 @@ def load_profile(path: str = DEFAULT_PROFILE,
         obs_check_radius=float(raw["mpc_obs_check_radius"]),
         max_iter=int(raw["mpc_max_iter"]), warm_start=bool(raw["mpc_warm_start"]),
         integrator=str(raw.get("mpc_integrator", "euler")),
+        N_c=(int(raw["mpc_N_c"]) if raw.get("mpc_N_c") is not None else None),
         path_mode=str(raw.get("mpc_path_mode", "time")),
         theta_progress_weight=float(raw.get("mpc_theta_progress_weight", 50.0)),
         terminal_constraint=str(raw.get("mpc_terminal_constraint", "none")),
@@ -218,11 +222,19 @@ def centred_pillar() -> Scenario:
     Un pilastro esattamente sulla retta verso il goal: e' il caso in cui il costo
     DOVREBBE avere due minimi (passo a sinistra / passo a destra).
 
-    Il pilastro sta a 0.55 m e non piu' lontano per una ragione precisa: con il
-    profilo G1 (N=15, dt=0.20, v_ref=0.2) l'orizzonte copre appena 0.6 m di
-    percorso (0.9 m a vx_max). Un ostacolo oltre quella distanza e' semplicemente
-    FUORI dall'orizzonte, la barriera non lo vede, e il paesaggio non biforca per
-    un motivo che non ha niente a che fare con il peso della barriera.
+    Il pilastro sta a 0.55 m perche' l'orizzonte del profilo G1 era N=15,
+    dt=0.20, v_ref=0.2, cioe' 0.60 m di percorso (0.9 m a vx_max): un ostacolo
+    oltre quella distanza era semplicemente FUORI dall'orizzonte, la barriera
+    non lo vedeva, e il paesaggio non biforcava per un motivo che non ha niente
+    a che fare con il peso della barriera.
+
+    [SIM] Col profilo attuale (dt = 0.35) l'orizzonte copre 1.05 m, quindi 0.55 m
+    e' ora ben dentro e il test resta valido — ma non e' piu' AL LIMITE, che era
+    il suo scopo. Il pilastro NON e' stato spostato di proposito: la figura
+    biforcazione_centred_pillar entra nel report tramite results_tex.py, e
+    cambiare la geometria dello scenario invaliderebbe silenziosamente il
+    confronto con le versioni precedenti. Per ritarare la prova al nuovo
+    orizzonte va spostato a ~0.95 m, rigenerando la figura.
     """
     th = np.linspace(0, 2 * np.pi, 16, endpoint=False)
     obs = np.stack([0.55 + 0.14 * np.cos(th), 0.14 * np.sin(th)], 1)
@@ -247,6 +259,83 @@ def corridor() -> Scenario:
                      _wall((1.8, -0.35), (1.8, 0.35))])
     return Scenario("corridor", np.array([0.0, 0.0, 0.0]), obs,
                     np.array([3.6, 0.0]), extent=(-0.8, 4.2, -1.6, 1.6))
+
+
+def _geom_footprint(ge, spacing=0.12, z_band=(0.15, 1.60)):
+    """Impronta 2D di un geom di mujoco_world, campionata in punti.
+
+    Si tiene solo cio' che interseca la fascia di quota che il filtro LiDAR
+    lascia passare (z_min/z_max di lidar_filter_g1.yaml): un geom tutto sopra o
+    tutto sotto quella fascia non arriva mai al pianificatore, e includerlo qui
+    renderebbe l'harness piu' pessimista del sistema vero.
+
+    Si campiona il PERIMETRO e non l'area: il LiDAR vede le superfici, non
+    l'interno, e una nuvola piena falserebbe sia la griglia gaussiana di A* sia
+    la barriera dell'MPC (che conta i punti piu' vicini).
+    """
+    # group 0 = decorazione (marcatori di goal/spawn): mujoco_world la tiene
+    # fuori da LIDAR_GROUP, quindi il ray-cast non la vede e il pianificatore
+    # nemmeno. Escluderla qui e' cio' che rende l'harness coerente col simulatore.
+    if ge.get("group") is not None and int(ge["group"]) == 0:
+        return np.zeros((0, 2))
+
+    cx, cy, cz = ge["pos"]
+    sz = ge["size"][-1]
+    if cz + sz < z_band[0] or cz - sz > z_band[1]:
+        return np.zeros((0, 2))
+
+    if ge["shape"] == "cyl":
+        r = ge["size"][0]
+        n = max(8, int(2 * np.pi * r / spacing))
+        th = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        return np.stack([cx + r * np.cos(th), cy + r * np.sin(th)], 1)
+
+    hx, hy = ge["size"][0], ge["size"][1]
+    corners = np.array([(-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)])
+    yaw = ge.get("yaw", 0.0)
+    c, s_ = np.cos(yaw), np.sin(yaw)
+    corners = corners @ np.array([[c, s_], [-s_, c]])
+    pts = []
+    for i in range(4):
+        p0, p1 = corners[i], corners[(i + 1) % 4]
+        n = max(2, int(np.linalg.norm(p1 - p0) / spacing) + 1)
+        pts.append(p0 + np.linspace(0, 1, n)[:, None] * (p1 - p0))
+    return np.vstack(pts) + np.array([cx, cy])
+
+
+def world_scenario(name: str, spacing: float = 0.12) -> Scenario:
+    """Uno Scenario dell'harness a partire da un mondo MuJoCo di g1_sim.
+
+    Serve a provare i mondi non convessi (long_wall, horseshoe, dead_end) senza
+    far girare MuJoCo, ROS e il LiDAR: stessa geometria, stessi spawn e goal.
+
+    ATTENZIONE alla differenza di fedelta': qui gli ostacoli sono NOTI PER
+    INTERO fin dal primo ciclo, mentre nel sistema vero il robot ne vede solo
+    la porzione entro max_lidar_range (8 m) e in linea di vista, integrata da
+    `_persistent_map` di a_star_node. Su un ostacolo concavo la differenza NON
+    e' trascurabile: qui A* sa gia' che la U e' chiusa, sul robot deve
+    scoprirlo. Un esito positivo qui e' quindi condizione NECESSARIA, non
+    sufficiente — se fallisce anche con informazione perfetta, sul robot e'
+    senza speranza.
+    """
+    import os
+    import sys as _sys
+    _pkg = os.path.join(os.path.dirname(_HERE_COMMON), "src", "g1_sim")
+    if _pkg not in _sys.path:
+        _sys.path.insert(0, _pkg)
+    from g1_sim.mujoco_world import world_info
+
+    info = world_info(name)
+    chunks = [_geom_footprint(ge, spacing) for ge in info["geoms"]()]
+    chunks = [c for c in chunks if len(c)]
+    obs = np.vstack(chunks) if chunks else np.zeros((0, 2))
+    sx, sy, syaw = info["spawn"]
+    gx, gy = info["goal"]
+    m = 1.5
+    ext = (min(sx, gx, obs[:, 0].min()) - m, max(sx, gx, obs[:, 0].max()) + m,
+           min(sy, gy, obs[:, 1].min()) - m, max(sy, gy, obs[:, 1].max()) + m)
+    return Scenario(name, np.array([sx, sy, syaw]), obs,
+                    np.array([gx, gy]), None, ext)
 
 
 def get_scenario(name: str) -> Scenario:
@@ -279,6 +368,35 @@ def plan_astar(pose, goal, obstacles, raw: dict):
     return None if not path else np.asarray(path, dtype=float)[:, :2]
 
 
+# Raggio d'ingombro del G1 [m] (planner_params_g1.yaml: "ingombro del robot
+# ~0.35 m", da cui obs_r = 0.40).
+BODY_RADIUS = 0.35
+# Sotto questa distanza il centro del robot e' cosi' vicino alla SUPERFICIE
+# campionata dell'ostacolo che la traiettoria l'ha attraversata: i punti sono
+# campionati ogni 0.12 m, quindi 0.15 m e' dentro lo spessore del muro.
+PENETRATION_EPS = 0.15
+
+
+def check_collisions(traj_xy, obstacles) -> dict:
+    """Verifica geometrica che una traiettoria dell'harness sia percorribile.
+
+    SERVE PERCHE' `closed_loop` NON HA COLLISIONI: l'impianto integra il comando
+    e basta, esattamente come mujoco_sim in modalita' cinematica (i geom hanno
+    contype=conaffinity=0). Gli ostacoli agiscono solo come celle bloccate in A*
+    e come penalita' MORBIDA nel costo dell'MPC, e nessuna delle due e' un
+    vincolo rigido. Quando il ramo di ripiego di closed_loop punta l'ultimo
+    waypoint di A* con un controllore proporzionale, quel proporzionale ignora
+    gli ostacoli e il robot puo' passare DENTRO un muro arrivando al goal.
+
+    Un "goal raggiunto" senza questo controllo non vuol dire niente: va sempre
+    letto insieme a `attraversamento`.
+    """
+    d = clearance(traj_xy, obstacles)
+    return {"clearance": d,
+            "attraversamento": bool(d < PENETRATION_EPS),
+            "contatto": bool(d < BODY_RADIUS)}
+
+
 def clearance(traj_xy, obstacles) -> float:
     """Distanza minima fra la traiettoria percorsa e il piu' vicino ostacolo."""
     if obstacles is None or len(obstacles) == 0:
@@ -308,14 +426,29 @@ def solve_at(tracker: MPCTracker, pose: np.ndarray, sc: Scenario):
 
 
 def closed_loop(tracker: MPCTracker, sc: Scenario, steps: int = 60,
-                lookahead: float = 0.9, kp: float = 1.0, kp_yaw: float = 1.5,
+                lookahead: float = None, kp: float = None, kp_yaw: float = None,
                 raw: dict = None, replan_every: int = 5):
     """
     Simula l'anello chiuso come sul robot: l'MPC pubblica un setpoint a
     `lookahead` metri, un controllore proporzionale lo insegue, l'impianto e'
     lo stesso modello cinematico di mujoco_sim.
+
+    lookahead/kp/kp_yaw a None (default) li prende dal PROFILO, rispettivamente
+    da mpc_lookahead_dist, cmd_kp_xy, cmd_kp_yaw. Erano costanti fisse
+    (0.9/1.0/1.5) e il valore 0.9 non era quello deployato (0.45): con un
+    orizzonte che copre v_ref*N*dt = 0.60 m la predizione non raggiungeva MAI
+    il lookahead, il ramo di fallback scattava sul 100% dei cicli e il setpoint
+    veniva preso dall'ultimo waypoint di A*. In quelle condizioni l'uscita
+    dell'MPC non entrava in anello chiuso e ogni sweep su N/dt misurava il
+    passo dell'impianto, non l'orizzonte.
     """
     cfg = tracker.cfg
+    if lookahead is None:
+        lookahead = float((raw or {}).get("mpc_lookahead_dist", 0.9))
+    if kp is None:
+        kp = float((raw or {}).get("cmd_kp_xy", 1.0))
+    if kp_yaw is None:
+        kp_yaw = float((raw or {}).get("cmd_kp_yaw", 1.5))
     pose = sc.pose.astype(float).copy()
     hist = {"pose": [], "cost": [], "pred": [], "solve_ms": [], "success": [],
             "ref": [], "wz": []}
@@ -354,7 +487,7 @@ def closed_loop(tracker: MPCTracker, sc: Scenario, steps: int = 60,
         ex, ey = c * e[0] + s * e[1], -s * e[0] + c * e[1]
         # il nodo insegue l'ORIENTAMENTO del setpoint, non la direzione verso di esso
         eyaw = np.arctan2(np.sin(tgt_yaw - pose[2]), np.cos(tgt_yaw - pose[2]))
-        vx = np.clip(kp * ex, 0.0, cfg.vx_max)
+        vx = np.clip(kp * ex, min(cfg.vx_min, 0.0), cfg.vx_max)
         vy = np.clip(kp * ey, -cfg.vy_max, cfg.vy_max)
         wz = np.clip(kp_yaw * eyaw, -cfg.omega_max, cfg.omega_max)
         # impianto: identico a mujoco_sim in modalita' cinematica
