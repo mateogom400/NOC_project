@@ -206,29 +206,31 @@ def horseshoe_geoms():
 def dead_end_geoms():
     """Corridoio stretto e lungo, CHIUSO in fondo, con il goal appena oltre.
 
-    Il corridoio e' largo 2.0 m e lungo 8 m, imboccatura a x=-2 e fondo chiuso a
-    x=+6. Il goal sta a (9, 0), cioe' subito dietro il fondo: la direzione del
-    corridoio punta al goal, ed e' questo che lo rende una trappola convincente
-    invece che un ostacolo qualunque.
+    Il corridoio e' largo 2.0 m e lungo 12 m, imboccatura a x=-2 e fondo chiuso
+    a x=+10. Il goal sta a (13, 0), cioe' subito dietro il fondo: la direzione
+    del corridoio punta al goal, ed e' questo che lo rende una trappola
+    convincente invece che un ostacolo qualunque.
 
-    Il fondo chiuso e' a 8 m dall'imboccatura, cioe' AL LIMITE della portata del
-    LiDAR (max_lidar_range 8.0) e appena dentro la finestra di A*: entrando, il
-    robot non ha ancora la prova che sia chiuso. Deve percorrerlo, scoprirlo e
-    tornare indietro — che e' il caso in cui la retromarcia appena riabilitata
-    (mpc_vx_min = -0.15) serve davvero.
+    [FIX] La lunghezza dev'essere MAGGIORE di max_lidar_range (8.0 m), non
+    uguale. Con 8 m il fondo era visibile gia' dall'imboccatura e il robot non
+    entrava mai davvero: si osservava un dondolio nord/sud all'imbocco (A* che
+    cambia lato a ogni ripianificazione) invece del rimpallo dentro-fuori che
+    si vede in MuJoCo. Con 12 m il fondo compare solo quando il robot e' a
+    x >= 2, cioe' 4 m DENTRO: a quel punto e' gia' impegnato, ed e' il caso in
+    cui la retromarcia (mpc_vx_min = -0.15) serve davvero.
 
     Larghezza 2.0 m scelta di proposito: con grid_std 0.31 e obstacle_threshold
     0.10 il raggio di blocco implicato e' 0.397 m, quindi restano 1.2 m di
     canale libero. Il corridoio e' percorribile, e il test riguarda il vicolo
     cieco, non la strettoia.
     """
-    g = _arena(12.0, 8.0)
-    g += [_seg(-2.0, 1.0, 6.0, 1.0, 2.5, 0.30),      # parete nord
-          _seg(-2.0, -1.0, 6.0, -1.0, 2.5, 0.30),    # parete sud
-          _seg(6.0, -1.0, 6.0, 1.0, 2.5, 0.30)]      # FONDO CHIUSO
+    g = _arena(16.0, 8.0)
+    g += [_seg(-2.0, 1.0, 10.0, 1.0, 2.5, 0.30),      # parete nord
+          _seg(-2.0, -1.0, 10.0, -1.0, 2.5, 0.30),    # parete sud
+          _seg(10.0, -1.0, 10.0, 1.0, 2.5, 0.30)]     # FONDO CHIUSO
     # Il giro largo e' libero: la soluzione esiste, e passa a nord o a sud.
     g += [_marker(-6.0, 0.0, [0.2, 0.4, 0.9, 1]),
-          _marker(9.0, 0.0, [0.2, 0.8, 0.3, 1])]
+          _marker(13.0, 0.0, [0.2, 0.8, 0.3, 1])]
     return g
 
 
@@ -246,8 +248,8 @@ WORLDS = {
                        goal=(7.0, 0.0),
                        desc="trappola a U aperta verso il robot, goal oltre il fondo"),
     "dead_end":   dict(geoms=dead_end_geoms, spawn=(-6.0, 0.0, 0.0),
-                       goal=(9.0, 0.0),
-                       desc="corridoio 2.0x8 m chiuso in fondo, goal appena oltre"),
+                       goal=(13.0, 0.0),
+                       desc="corridoio 2.0x12 m chiuso in fondo, goal appena oltre"),
 }
 
 

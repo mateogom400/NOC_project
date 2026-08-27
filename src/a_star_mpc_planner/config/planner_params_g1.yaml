@@ -53,6 +53,41 @@
     obstacle_threshold: 0.10       # [DER] vedi formula sopra
     obstacle_cost_weight: 35.0     # [GO2]
     replan_rate_hz: 1.0            # [GO2]
+
+    # ─────────────────────────────────────────────────────────────
+    # Scelta del bersaglio locale (ostacoli NON CONVESSI)
+    # ─────────────────────────────────────────────────────────────
+    # [SIM] Di serie A* sceglie il bersaglio proiettando il goal globale sul
+    # bordo della finestra lungo il raggio robot->goal. E' memoryless e
+    # direzionale: davanti a una concavita' il raggio punta DENTRO, quindi il
+    # robot entra, scopre che e' chiusa, esce, e appena fuori il raggio ripunta
+    # dentro. Il ciclo limite e' deterministico, non sfortuna.
+    #
+    # use_geodesic_target sostituisce ||c - goal|| con la distanza geodetica
+    # sulla mappa gia' accumulata. Misurato su viz/escape_test.py con il robot
+    # 4 m dentro un vicolo cieco di 12 m:
+    #     candidata dentro il vicolo   euclidea 3.65 m   geodetica 28.79 m
+    #     candidata fuori, di lato     euclidea 3.76 m   geodetica  4.06 m
+    # L'euclidea le dichiara equivalenti e una scelta su tre rimanda il robot
+    # nella trappola.
+    #
+    # Esito in anello chiuso con percezione limitata (mondo dead_end, hw 8):
+    #     senza   goal NON raggiunto, 118 inversioni di marcia, 58.7 m in 300 s
+    #     con     goal raggiunto in 109 s,  2 inversioni,        31.9 m
+    # Su horseshoe e long_wall, che gia' riuscivano, non peggiora nulla:
+    # long_wall passa da 6 inversioni a 0.
+    #
+    # COSTO: ~85 ms per ripianificazione (fronte d'onda su tutta la mappa nota,
+    # non sulla sola finestra). Con replan_rate_hz 1.0 e' il ~9% del periodo.
+    use_geodesic_target: true      # [SIM]
+    geodesic_margin: 6.0           # [SIM] margine del riquadro del fronte d'onda
+
+    # [SIM] Isteresi sulla scelta: due rotte OMOTOPICAMENTE diverse ma di costo
+    # quasi uguale — i due lati di un corridoio simmetrico — facevano alternare
+    # il bersaglio a ogni ciclo, col robot che dondolava sul posto senza mai
+    # impegnarsi. Questo e' il margine di cui l'alternativa deve essere migliore
+    # per giustificare il cambio. 0 disattiva.
+    target_switch_margin: 2.0      # [SIM]
     goal_reached_radius: 0.25      # [HW] goal_tolerance del profilo G1
     duplicate_goal_xy_tolerance: 0.05
     duplicate_goal_z_tolerance: 0.05

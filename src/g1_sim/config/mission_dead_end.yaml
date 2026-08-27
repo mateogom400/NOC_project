@@ -1,0 +1,13 @@
+# Missione per world:=dead_end. Il goal e' subito dietro il fondo chiuso del
+# corridoio: la direzione del corridoio PUNTA al goal, ed e' questo che rende
+# il vicolo una trappola convincente invece di un ostacolo qualunque.
+#
+#   ros2 launch g1_sim g1_a_star_mpc.launch.py world:=dead_end \
+#        use_mission:=true \
+#        mission_file:=$(ros2 pkg prefix g1_sim)/share/g1_sim/config/mission_dead_end.yaml
+frame_id: odom
+reach_radius:     0.35
+leg_timeout_sec: 300.0
+
+waypoints:
+  - { x: 13.0, y:  0.0, yaw: 0.0, name: "oltre_il_vicolo" }

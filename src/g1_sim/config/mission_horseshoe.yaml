@@ -1,0 +1,12 @@
+# Missione per world:=horseshoe. Il goal sta oltre il fondo della U, quindi la
+# linea retta verso di esso entra nella trappola: e' il punto del test.
+#
+#   ros2 launch g1_sim g1_a_star_mpc.launch.py world:=horseshoe \
+#        use_mission:=true \
+#        mission_file:=$(ros2 pkg prefix g1_sim)/share/g1_sim/config/mission_horseshoe.yaml
+frame_id: odom
+reach_radius:     0.35
+leg_timeout_sec: 300.0
+
+waypoints:
+  - { x:  7.0, y:  0.0, yaw: 0.0, name: "oltre_la_U" }

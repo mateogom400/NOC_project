@@ -1,0 +1,16 @@
+# Missione per world:=long_wall. Un solo goal, dietro il muro.
+#
+#   ros2 launch g1_sim g1_a_star_mpc.launch.py world:=long_wall \
+#        use_mission:=true \
+#        mission_file:=$(ros2 pkg prefix g1_sim)/share/g1_sim/config/mission_long_wall.yaml
+#
+# reach_radius e' 0.35, cioe' PIU' GRANDE di goal_reached_radius (0.25) del
+# profilo G1. Deve esserlo: a_star_node smette di ripianificare sotto 0.25 m,
+# quindi se la missione pretendesse una soglia piu' stretta il robot non si
+# avvicinerebbe piu' e la tratta non avanzerebbe mai.
+frame_id: odom
+reach_radius:     0.35
+leg_timeout_sec: 300.0     # il giro attorno al muro e' ~22 m a 0.3 m/s
+
+waypoints:
+  - { x:  6.0, y: -4.0, yaw: 0.0, name: "oltre_il_muro" }

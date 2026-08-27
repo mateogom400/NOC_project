@@ -23,6 +23,8 @@ Architecture
 author: Lorenzo Ortolani (adapted for Go2)
 """
 
+import time
+
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -37,6 +39,7 @@ from std_msgs.msg import Float32MultiArray, Header
 from a_star_mpc_planner.a_star_planner import AStarPlanner
 from a_star_mpc_planner.gaussian_grid_map import FixedGaussianGridMap
 from a_star_mpc_planner.persistent_map import PersistentOccupancyMap
+from a_star_mpc_planner.geodesic_field import GeodesicField, block_radius
 
 
 class AStarNode(Node):
@@ -82,6 +85,19 @@ class AStarNode(Node):
         self._max_lidar_range = float(self.get_parameter('max_lidar_range').value)
 
         # ── Algorithm objects ─────────────────────────────────────────
+        # ── selezione del bersaglio locale ────────────────────────────
+        # false = comportamento storico (proiezione del goal sul bordo della
+        # finestra lungo il raggio robot->goal). true = argmin della geodetica.
+        self.declare_parameter('use_geodesic_target', False)
+        # Margine [m] attorno al riquadro robot+goal+mappa nota su cui si
+        # propaga il fronte d'onda. Generoso di proposito: la via d'uscita da
+        # una concavita' esce spesso dal rettangolo che contiene robot e goal.
+        self.declare_parameter('geodesic_margin', 6.0)
+        # Isteresi: quanto deve migliorare una rotta alternativa per cambiare
+        # idea. Senza, due rotte simmetriche (i due lati di un corridoio) si
+        # alternano a ogni ripianificazione e il robot dondola sul posto.
+        self.declare_parameter('target_switch_margin', 0.0)
+
         self._grid_map = FixedGaussianGridMap(
             reso=float(self.get_parameter('grid_reso').value),
             half_width=float(self.get_parameter('grid_half_width').value),
@@ -90,7 +106,19 @@ class AStarNode(Node):
         self._planner = AStarPlanner(
             obstacle_threshold=float(self.get_parameter('obstacle_threshold').value),
             obstacle_cost_weight=float(self.get_parameter('obstacle_cost_weight').value),
+            switch_margin=float(self.get_parameter('target_switch_margin').value),
         )
+        # Selettore del bersaglio locale basato sulla distanza GEODETICA sulla
+        # mappa accumulata, invece che euclidea. Vedi geodesic_field.py: con
+        # l'euclidea una cella in fondo a una tasca chiusa sembra a 3.65 m dal
+        # goal mentre ne dista 28.79 di cammino, e il pianificatore ci rimanda
+        # il robot ciclo dopo ciclo.
+        self._use_geodesic = bool(self.get_parameter('use_geodesic_target').value)
+        self._geo_margin = float(self.get_parameter('geodesic_margin').value)
+        self._r_block = block_radius(
+            float(self.get_parameter('grid_std').value),
+            float(self.get_parameter('obstacle_threshold').value))
+        self._geo_ms = 0.0
         self._persistent_map = PersistentOccupancyMap(
             grid_reso=float(self.get_parameter('grid_reso').value),
             decay_sec=float(self.get_parameter('map_decay_sec').value),
@@ -283,7 +311,30 @@ class AStarNode(Node):
         # Plan directly to the current global goal; do not route through
         # nav-graph waypoints, so a previous explored graph node cannot block
         # or pull the robot backward when a new goal is sent.
-        path = self._planner.plan(self._grid_map, drone_xy, self._goal[:2])
+        geo = None
+        if self._use_geodesic:
+            # Il campo si propaga su TUTTA la mappa accumulata, non sulla sola
+            # finestra di A*: e' proprio l'informazione fuori finestra (il fondo
+            # del vicolo, la fine del muro) che rende la geodetica diversa
+            # dall'euclidea, e restringerla alla finestra la renderebbe inutile.
+            _t0 = time.perf_counter()
+            known = self._persistent_map.get_points_in_window(
+                -1e6, -1e6, 1e6, 1e6)
+            if known is not None and len(known):
+                try:
+                    geo = GeodesicField(
+                        np.asarray(known)[:, :2], self._goal[:2], drone_xy,
+                        reso=self._grid_map.reso, r_block=self._r_block,
+                        margin=self._geo_margin)
+                except Exception as exc:      # non deve mai fermare la nav
+                    self.get_logger().warn(
+                        f'[A*] campo geodetico non calcolabile: {exc}',
+                        throttle_duration_sec=5.0)
+                    geo = None
+            self._geo_ms = (time.perf_counter() - _t0) * 1e3
+
+        path = self._planner.plan(self._grid_map, drone_xy, self._goal[:2],
+                                  None, geo)
 
         if path:
             # Publish path
@@ -315,7 +366,8 @@ class AStarNode(Node):
                 f'[A*] NAVIGATING  dist_to_goal={dist_to_goal:.2f} m  '
                 f'robot=({drone_xy[0]:.2f},{drone_xy[1]:.2f})  '
                 f'goal=({self._goal[0]:.2f},{self._goal[1]:.2f})  '
-                f'path={len(path)} wpts  local_goal=({path[-1][0]:.2f},{path[-1][1]:.2f})',
+                f'path={len(path)} wpts  local_goal=({path[-1][0]:.2f},{path[-1][1]:.2f})'
+                + (f'  geo={self._geo_ms:.0f}ms' if self._use_geodesic else ''),
                 throttle_duration_sec=1.0,
             )
         else:

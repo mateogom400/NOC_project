@@ -75,6 +75,8 @@ class AStarPlanner:
         self,
         obstacle_threshold: float = 0.5,
         obstacle_cost_weight: float = 10.0,
+        tabu_weight: float = 0.0,
+        switch_margin: float = 0.0,
     ):
         """
         Parameters
@@ -83,9 +85,23 @@ class AStarPlanner:
                                hard obstacles (infinite cost).
         obstacle_cost_weight : soft cost multiplier for cells below threshold.
                                Higher values push the path further from obstacles.
+        tabu_weight          : peso del termine tabu nella SCELTA DEL GOAL LOCALE
+                               (non nel costo di percorso). 0 disattiva: con 0 il
+                               comportamento e' identico a prima, bit per bit.
         """
         self.obstacle_threshold = obstacle_threshold
         self.obstacle_cost_weight = obstacle_cost_weight
+        self.tabu_weight = float(tabu_weight)
+        # Isteresi sulla SCELTA del bersaglio: per cambiare rotta la nuova
+        # candidata deve battere di almeno questo margine [m] quella vicina alla
+        # scelta precedente. Serve dove due rotte sono OMOTOPICAMENTE DIVERSE ma
+        # di costo quasi uguale — i due lati di un corridoio simmetrico, i due
+        # capi di un muro. Li' l'argmin puro alterna a ogni ripianificazione e il
+        # robot dondola sul posto senza impegnarsi. Misurato su dead_end: senza
+        # margine il bersaglio salta fra y=+1.7 e y=-1.2 ogni ciclo. 0 disattiva.
+        self.switch_margin = float(switch_margin)
+        self._prev_goal_xy = None      # ultima scelta, per l'isteresi
+        self._prev_global = None       # goal globale associato
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -96,6 +112,8 @@ class AStarPlanner:
         grid_map: FixedGaussianGridMap,
         drone_pos_xy,
         global_goal_xy,
+        tabu=None,
+        geodesic=None,
     ):
         """
         Plan a path from the current drone position to a local goal.
@@ -127,7 +145,7 @@ class AStarPlanner:
         # --- determine local goal ---
         gx = float(global_goal_xy[0])
         gy = float(global_goal_xy[1])
-        gix, giy = self._local_goal(grid_map, six, siy, gx, gy)
+        gix, giy = self._local_goal(grid_map, six, siy, gx, gy, tabu, geodesic)
 
         if gix is None:
             return None
@@ -139,6 +157,20 @@ class AStarPlanner:
 
         # --- A* search ---
         path_grid = self._a_star(grid_map, six, siy, gix, giy)
+
+        if path_grid is None and geodesic is not None:
+            # Il bersaglio geodetico puo' essere raggiungibile DAL GOAL ma non
+            # DAL ROBOT dentro la finestra: il fronte d'onda tratta lo spazio
+            # mai visto come libero e puo' aggirare la porzione di muro gia'
+            # osservata passando per l'ignoto, mentre A* cerca solo nella
+            # finestra e trova quel muro sulla propria strada. Senza questo
+            # ripiego il nodo non pubblica nulla e il robot resta FERMO — che e'
+            # peggio del comportamento storico. Osservato su long_wall con
+            # grid_half_width 6: bersaglio (-0.20, -8.60), fuori dall'arena.
+            gix2, giy2 = self._local_goal(grid_map, six, siy, gx, gy, None, None)
+            if gix2 is not None and (gix2, giy2) != (gix, giy):
+                path_grid = self._a_star(grid_map, six, siy, gix2, giy2)
+
         if path_grid is None:
             return None
 
@@ -154,6 +186,8 @@ class AStarPlanner:
         grid_map: FixedGaussianGridMap,
         six: int, siy: int,
         gx: float, gy: float,
+        tabu=None,
+        geodesic=None,
     ):
         """
         Compute the A* target cell.
@@ -164,7 +198,31 @@ class AStarPlanner:
         If the global goal is outside the grid, find the intersection of
         the ray (drone -> global_goal) with the grid boundary and return
         the last free boundary cell along that ray.
+
+        Con `tabu` attivo la regola cambia: invece di PROIETTARE il goal si
+        MINIMIZZA su tutte le celle libere candidate
+
+            J(c) = ||c - goal|| + tabu_weight * tabu(c)
+
+        La proiezione lungo il raggio e' memoryless e direzionale, ed e' cio'
+        che davanti a un ostacolo concavo manda il bersaglio dentro la
+        concavita' ciclo dopo ciclo. L'argmin con memoria puo' invece scegliere
+        un bersaglio laterale, che e' quanto serve per uscire.
         """
+        usa_tabu = (tabu is not None and getattr(tabu, "active", False)
+                    and self.tabu_weight > 0)
+        if geodesic is not None or usa_tabu:
+            cand = self._scored_local_goal(grid_map, six, siy, gx, gy,
+                                           tabu if usa_tabu else None, geodesic)
+            if cand is not None:
+                return cand
+            # Nessuna candidata utilizzabile: o il tabu ha saturato la finestra,
+            # o (con la geodetica) nessuna cella di bordo e' raggiungibile su
+            # cio' che si conosce. Si ripiega sulla regola geometrica, che
+            # almeno fa muovere il robot verso terreno ignoto.
+            if usa_tabu:
+                tabu.panic_reset()
+
         gix_raw, giy_raw = grid_map.world_to_index(gx, gy)
 
         if gix_raw is not None:
@@ -186,6 +244,107 @@ class AStarPlanner:
         if self._is_free(grid_map, border_ix, border_iy):
             return border_ix, border_iy
         return self._nearest_free(grid_map, border_ix, border_iy)
+
+    def _scored_local_goal(
+        self,
+        grid_map: FixedGaussianGridMap,
+        six: int, siy: int,
+        gx: float, gy: float,
+        tabu=None,
+        geodesic=None,
+    ):
+        """Bersaglio come argmin di d(c, goal) + w * tabu(c).
+
+        `d` e' la GEODETICA sulla mappa nota quando `geodesic` e' fornito,
+        altrimenti l'euclidea. E' la differenza che conta: con l'euclidea una
+        cella in fondo a una tasca chiusa sembra vicinissima al goal (3.65 m
+        contro i 28.79 m di cammino reale, misurati su dead_end), e il
+        pianificatore la sceglie. La geodetica usa l'informazione che il robot
+        ha gia' raccolto invece di buttarla via.
+
+        Il tabu resta come ROMPI-SIMMETRIA: quando due candidate hanno geodetica
+        praticamente uguale — i due lati di un corridoio, i due capi di un muro —
+        e' cio' che impedisce di cambiare idea a ogni ripianificazione.
+
+        Le candidate sono le celle libere del BORDO della finestra piu', se il
+        goal globale ci sta dentro, la sua cella. Solo il bordo perche' e' li'
+        che si decide la direzione: una candidata interna farebbe fermare il
+        robot a meta' finestra senza motivo.
+
+        Ritorna None quando ogni candidata e' penalizzata (tabu saturo) o non
+        ce ne sono di libere: il chiamante ripiega.
+        """
+        cells = grid_map.cells
+        ring = []
+        for i in range(cells):
+            ring += [(i, 0), (i, cells - 1), (0, i), (cells - 1, i)]
+
+        gix_raw, giy_raw = grid_map.world_to_index(gx, gy)
+        if gix_raw is not None:
+            ring.append((gix_raw, giy_raw))
+
+        best, best_J = None, float("inf")
+        scored = []
+        n_libere, n_vergini, n_raggiungibili = 0, 0, 0
+        for (ix, iy) in ring:
+            if not self._is_free(grid_map, ix, iy):
+                continue
+            n_libere += 1
+            wx, wy = grid_map.index_to_world(ix, iy)
+
+            if geodesic is not None:
+                d = geodesic.distance(wx, wy)
+                if not math.isfinite(d):
+                    # Irraggiungibile su cio' che si conosce: scartata. Non si
+                    # ripiega sull'euclidea, che e' proprio la metrica che
+                    # sbaglia. Se NESSUNA e' raggiungibile si ripiega a valle.
+                    continue
+                n_raggiungibili += 1
+            else:
+                d = math.hypot(wx - gx, wy - gy)
+
+            pen = float(tabu.penalty(wx, wy)[0]) if tabu is not None else 0.0
+            if pen <= 0.0:
+                n_vergini += 1
+            J = d + self.tabu_weight * pen
+            scored.append((J, ix, iy, wx, wy))
+            if J < best_J:
+                best, best_J = (ix, iy), J
+
+        if best is None:
+            # Con la geodetica attiva questo significa "nessuna candidata
+            # raggiungibile sulla mappa nota": il chiamante ripiega sulla regola
+            # geometrica, che almeno fa muovere il robot verso terreno ignoto.
+            return None
+        # Saturazione: si ripiega SOLO quando NESSUNA candidata e' vergine, cioe'
+        # quando il tabu ha coperto ogni direzione e non esiste piu' un "altrove"
+        # da provare. Non basta che la vincente sia penalizzata: l'argmin ha gia'
+        # pesato la penalita', e se vince lo stesso e' perche' e' il compromesso
+        # migliore. (Bailare su best_pen > 0 disattivava il meccanismo proprio
+        # nei cicli in cui serviva.)
+        if tabu is not None and n_libere and n_vergini == 0:
+            return None
+
+        # ── isteresi ──────────────────────────────────────────────────
+        # Se il goal globale e' cambiato la memoria non vale piu': un bersaglio
+        # ereditato dalla missione precedente e' semplicemente la direzione
+        # sbagliata.
+        gkey = (round(gx, 3), round(gy, 3))
+        if self._prev_global != gkey:
+            self._prev_global = gkey
+            self._prev_goal_xy = None
+
+        if self.switch_margin > 0.0 and self._prev_goal_xy is not None and scored:
+            px, py = self._prev_goal_xy
+            # la candidata che meglio prosegue la scelta precedente
+            near = min(scored, key=lambda t: math.hypot(t[3] - px, t[4] - py))
+            if near[0] <= best_J + self.switch_margin:
+                best = (near[1], near[2])
+                best_J = near[0]
+
+        if best is not None:
+            self._prev_goal_xy = grid_map.index_to_world(best[0], best[1])
+        return best
 
     def _ray_grid_boundary(
         self,

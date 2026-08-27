@@ -1,0 +1,36 @@
+[
+  {
+    "goal": false,
+    "t_s": 199.85,
+    "lung_m": 16.218295226276318,
+    "inversioni": 206,
+    "clearance": 0.46142794095921214,
+    "attraversamento": false,
+    "tabu_arms": 0,
+    "copertura": 0.15,
+    "x_max": -0.611403479917234,
+    "y_ptp": 0.03723931030424854,
+    "geo_ms_mediana": 0.0,
+    "geo_ms_max": 0.0,
+    "mondo": "long_wall",
+    "hw": 6.0,
+    "piano": "baseline"
+  },
+  {
+    "goal": false,
+    "t_s": 199.85,
+    "lung_m": 16.218295226276318,
+    "inversioni": 206,
+    "clearance": 0.46142794095921214,
+    "attraversamento": false,
+    "tabu_arms": 0,
+    "copertura": 0.15,
+    "x_max": -0.611403479917234,
+    "y_ptp": 0.03723931030424854,
+    "geo_ms_mediana": 74.18440499895951,
+    "geo_ms_max": 130.261636000796,
+    "mondo": "long_wall",
+    "hw": 6.0,
+    "piano": "geodetica"
+  }
+]

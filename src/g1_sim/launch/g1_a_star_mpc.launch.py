@@ -89,6 +89,12 @@ def generate_launch_description():
         DeclareLaunchArgument("goal_relay",   default_value="true"),
         DeclareLaunchArgument("use_mission",  default_value="false"),
         DeclareLaunchArgument("mission_file", default_value=""),
+        # Ritardo prima che la missione pubblichi il PRIMO goal. Il default del
+        # nodo e' 3 s, troppo pochi: il goal partirebbe prima che si riesca ad
+        # avviare viz/record_run.sh, e /global_goal e' pubblicato UNA SOLA
+        # volta — una bag che se lo perde e' inutilizzabile dagli strumenti
+        # di analisi. 20 s bastano per lanciare il recorder con calma.
+        DeclareLaunchArgument("mission_delay", default_value="20.0"),
     ]
 
     params_file  = LaunchConfiguration("params_file")
@@ -202,7 +208,10 @@ def generate_launch_description():
             name="mission_runner_node", output="screen",
             parameters=[sim_time, {"mission_file": LaunchConfiguration("mission_file"),
                                    "global_goal_topic": "/global_goal",
-                                   "odom_topic": "/odom"}],
+                                   "odom_topic": "/odom",
+                                   "start_delay_sec": ParameterValue(
+                                       LaunchConfiguration("mission_delay"),
+                                       value_type=float)}],
             condition=IfCondition(LaunchConfiguration("use_mission")),
         ),
 
